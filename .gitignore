@@ -1,0 +1,15 @@
+work/
+out/
+vmware/shedos.vmx
+vmware/shedos-console.log
+vmware/*.vmdk
+vmware/*.nvram
+vmware/*.vmsd
+vmware/*.vmem
+vmware/*.lck/
+vmware/*.lck
+*.iso
+__pycache__/
+*.pyc
+.DS_Store
+._*

@@ -1,0 +1,6 @@
+
+  ShedOS 0.1 — Claude is your shell.
+  This SSH session is the escape hatch; the agent runs on tty1.
+  Editing /etc/shedos/* and running `rc-service shedos-brain restart`
+  applies changes without a rebuild. Have fun.
+

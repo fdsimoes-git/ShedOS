@@ -1,0 +1,10 @@
+alpine-base
+openssh
+openrc
+python3
+py3-httpx
+ca-certificates
+curl
+htop
+busybox-extras
+iproute2

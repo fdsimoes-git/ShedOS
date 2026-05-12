@@ -1,0 +1,19 @@
+#!/bin/sh
+# Runs once on every boot via the `local` OpenRC service.
+
+set -e
+
+# Generate SSH host keys if they don't exist (tmpfs rootfs needs this each boot).
+if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+    /usr/bin/ssh-keygen -A
+fi
+
+# Ensure the token directory exists with tight perms.
+install -d -m 0700 /etc/shedos
+[ -f /etc/shedos/token ] && chmod 600 /etc/shedos/token
+
+# Make sure root's .ssh has correct perms.
+if [ -d /root/.ssh ]; then
+    chmod 700 /root/.ssh
+    [ -f /root/.ssh/authorized_keys ] && chmod 600 /root/.ssh/authorized_keys
+fi

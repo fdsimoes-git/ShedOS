@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+
+name="shedos-brain"
+description="ShedOS Claude agent — owns tty1"
+command="/opt/shedos/run-brain.sh"
+supervisor="supervise-daemon"
+pidfile="/run/shedos-brain.pid"
+respawn_delay=2
+respawn_max=0
+
+depend() {
+    need net localmount
+    after sshd
+    use logger
+}

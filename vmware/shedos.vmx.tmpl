@@ -1,0 +1,38 @@
+.encoding = "UTF-8"
+config.version = "8"
+virtualHW.version = "21"
+displayName = "ShedOS"
+
+guestOS = "arm-other-64"
+firmware = "efi"
+
+memsize = "2048"
+numvcpus = "2"
+cpuid.coresPerSocket = "2"
+
+# Boot from the ISO (no hard disk — diskless mode, root is tmpfs)
+sata0.present = "TRUE"
+sata0:0.present = "TRUE"
+sata0:0.fileName = "../out/shedos.iso"
+sata0:0.deviceType = "cdrom-image"
+sata0:0.startConnected = "TRUE"
+
+# Network: NAT so it works behind Wi-Fi without manual interface picking
+ethernet0.present = "TRUE"
+ethernet0.connectionType = "nat"
+ethernet0.virtualDev = "vmxnet3"
+ethernet0.addressType = "generated"
+ethernet0.startConnected = "TRUE"
+
+# Serial console -> file, so headless debugging works without a UI
+serial0.present = "TRUE"
+serial0.fileType = "file"
+serial0.fileName = "shedos-console.log"
+serial0.startConnected = "TRUE"
+
+# Apple Silicon quirks
+monitor.allowLegacyCPU = "TRUE"
+
+# Power-on behavior — open the Fusion console window by default; flip to
+# FALSE once you're confident in the boot and prefer fully headless runs.
+gui.exitOnCLIHLT = "FALSE"

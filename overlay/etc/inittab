@@ -1,0 +1,16 @@
+# /etc/inittab — ShedOS
+
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+
+# tty1 is owned by shedos-brain (via OpenRC). No getty on tty1.
+# Local rescue: Alt-F2..F6 give classic root login.
+tty2::respawn:/sbin/getty 38400 tty2
+tty3::respawn:/sbin/getty 38400 tty3
+tty4::respawn:/sbin/getty 38400 tty4
+tty5::respawn:/sbin/getty 38400 tty5
+tty6::respawn:/sbin/getty 38400 tty6
+
+# Stuff to do before rebooting
+::shutdown:/sbin/openrc shutdown

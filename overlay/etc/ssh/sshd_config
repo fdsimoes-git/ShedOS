@@ -1,0 +1,18 @@
+# ShedOS sshd_config — key-only root login as the escape hatch.
+
+Port 22
+AddressFamily any
+ListenAddress 0.0.0.0
+ListenAddress ::
+
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+
+UsePAM no
+PrintMotd yes
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/ssh/sftp-server

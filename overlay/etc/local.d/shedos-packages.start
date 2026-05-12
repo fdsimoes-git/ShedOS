@@ -1,0 +1,24 @@
+#!/bin/sh
+# Install ShedOS userland on first boot. Idempotent: apk add is a no-op
+# when packages are already present. Runs every boot since rootfs is tmpfs.
+
+set -e
+
+PKGS="openssh python3 py3-httpx ca-certificates curl htop iproute2"
+
+# Wait briefly for network/DNS — `local` runs after `net` but DHCP may still be settling.
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    if /usr/bin/nslookup dl-cdn.alpinelinux.org >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+/sbin/apk update >/dev/null 2>&1 || true
+/sbin/apk add --no-progress $PKGS >/var/log/shedos-packages.log 2>&1
+
+# Start sshd now that openssh is installed (it may not have been at boot time).
+/sbin/rc-service sshd start >/dev/null 2>&1 || true
+
+# Now that python3 is installed, start the brain.
+/sbin/rc-service shedos-brain start >/dev/null 2>&1 || true

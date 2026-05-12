@@ -1,0 +1,8 @@
+# /etc/conf.d/shedos-brain — environment for the Claude agent service.
+# These are read by OpenRC and exported to the supervised process.
+
+# Model id passed to /v1/messages. Override here without rebuilding the ISO.
+# SHEDOS_MODEL="claude-opus-4-6"
+
+# Set to "1" for verbose HTTP traces from the brain.
+# SHEDOS_DEBUG="0"

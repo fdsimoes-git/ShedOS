@@ -1,0 +1,7 @@
+openssh
+python3
+py3-httpx
+ca-certificates
+curl
+htop
+iproute2
