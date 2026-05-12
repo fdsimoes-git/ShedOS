@@ -87,7 +87,9 @@ ln -sf /etc/init.d/networking  "$STAGE/etc/runlevels/boot/networking"
 
 ln -sf /etc/init.d/local       "$STAGE/etc/runlevels/default/local"
 ln -sf /etc/init.d/sshd        "$STAGE/etc/runlevels/default/sshd"
-ln -sf /etc/init.d/shedos-brain "$STAGE/etc/runlevels/default/shedos-brain"
+# shedos-brain is launched by getty via inittab — see overlay/etc/inittab.
+# We keep the init.d file around for manual `rc-service shedos-brain restart`,
+# but don't activate it in the default runlevel.
 
 ln -sf /etc/init.d/mount-ro    "$STAGE/etc/runlevels/shutdown/mount-ro"
 ln -sf /etc/init.d/killprocs   "$STAGE/etc/runlevels/shutdown/killprocs"
@@ -169,15 +171,19 @@ xorriso -osirrox on -indev "$ISO_PATH" -extract / "$ISO_RW_DIR" >/dev/null
 chmod -R u+w "$ISO_RW_DIR"
 
 # --- 8. Place apkovl on the ISO root ---------------------------------------
+# Two copies, both at ISO root, for redundancy:
+#  - localhost.apkovl.tar.gz : Alpine's nlplug-findfs auto-discovers
+#    "${hostname}.apkovl.tar.gz" from any scanned block device. At boot,
+#    before our overlay applies, the hostname is "localhost".
+#  - shedos.apkovl.tar.gz    : referenced by the explicit apkovl= kernel arg
+#    via the actual block-device name (sr0 for SATA optical).
+cp "$APKOVL" "$ISO_RW_DIR/localhost.apkovl.tar.gz"
 cp "$APKOVL" "$ISO_RW_DIR/shedos.apkovl.tar.gz"
 
-# Also drop a hostname-named copy. Alpine's nlplug-findfs autoloads
-# <hostname>.apkovl.tar.gz when found on any detected block device, which
-# gives us a working fallback if the explicit apkovl= cmdline edit fails.
-cp "$APKOVL" "$ISO_RW_DIR/shedos.apkovl.tar.gz.bak"
-
 # --- 9. Edit the bootloader config to add the apkovl= kernel arg ------------
-APKOVL_ARG="apkovl=cdrom:iso9660:/shedos.apkovl.tar.gz"
+# Use sr0 (the real Linux device name for the SATA CD-ROM the initramfs sees)
+# — "cdrom" is a userspace symlink that doesn't exist at this stage.
+APKOVL_ARG="apkovl=sr0:iso9660:/shedos.apkovl.tar.gz"
 EDITED=0
 for cfg in \
     "$ISO_RW_DIR/boot/grub/grub.cfg" \
@@ -187,20 +193,22 @@ for cfg in \
     "$ISO_RW_DIR/boot/syslinux/extlinux.conf"; do
     if [[ -f "$cfg" ]]; then
         log "patching $cfg"
-        # grub-style: append to the linux line
+        # Patch the bootloader's kernel cmdline:
+        #  (a) Append apkovl= so initramfs auto-applies our overlay.
+        #  (b) Rewrite console=ttyAMA0 -> console=ttyS0,115200 — Fusion's
+        #      emulated serial appears as ttyS0 in the guest; ttyAMA0 (ARM
+        #      PL011) doesn't exist here, so kernel printk to it is dropped.
         python3 - "$cfg" "$APKOVL_ARG" <<'PY'
 import re, sys
 path, arg = sys.argv[1], sys.argv[2]
 with open(path) as f:
     src = f.read()
-def patch_linux(m):
-    line = m.group(0).rstrip()
-    return f"{line} {arg}\n"
-def patch_append(m):
-    line = m.group(0).rstrip()
-    return f"{line} {arg}\n"
-new = re.sub(r'(?m)^\s*linux\s+.*$\n?', patch_linux, src)
-new = re.sub(r'(?m)^\s*append\s+.*$\n?', patch_append, new)
+# Route console output to the serial port that actually exists.
+src = re.sub(r'console=ttyAMA0(,\d+)?', 'console=ttyS0,115200', src)
+def patch(m):
+    return m.group(0).rstrip() + f" {arg}\n"
+new = re.sub(r'(?m)^\s*linux\s+.*$\n?', patch, src)
+new = re.sub(r'(?m)^\s*append\s+.*$\n?', patch, new)
 with open(path, 'w') as f:
     f.write(new)
 PY
@@ -222,7 +230,8 @@ while IFS= read -r f; do
     rel="${f#$ISO_RW_DIR}"
     MAP_ARGS+=( -map "$f" "$rel" )
 done < <(find "$ISO_RW_DIR" -type f \
-            \( -path '*/shedos.apkovl.tar.gz*' \
+            \( -path '*/shedos.apkovl.tar.gz' \
+            -o -path '*/localhost.apkovl.tar.gz' \
             -o -path '*/grub*' \
             -o -path '*/syslinux.cfg' \
             -o -path '*/extlinux.conf' \))

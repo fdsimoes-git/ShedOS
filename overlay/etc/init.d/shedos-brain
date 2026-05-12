@@ -1,15 +1,33 @@
 #!/sbin/openrc-run
 
+# The brain is launched by getty on tty1 (see /etc/inittab) so that the
+# tty session and controlling-terminal semantics are correct. This service
+# stub exists only so `rc-service shedos-brain restart` does the obvious
+# thing: kill the running brain so getty respawns it.
+
 name="shedos-brain"
-description="ShedOS Claude agent — owns tty1"
-command="/opt/shedos/run-brain.sh"
-supervisor="supervise-daemon"
-pidfile="/run/shedos-brain.pid"
-respawn_delay=2
-respawn_max=0
+description="ShedOS Claude agent (tty1 via getty)"
 
 depend() {
-    need net localmount
-    after sshd
-    use logger
+    need net
+}
+
+start() {
+    ebegin "shedos-brain is launched by getty (see /etc/inittab); nothing to start"
+    eend 0
+}
+
+stop() {
+    ebegin "Stopping shedos-brain — getty will respawn it shortly"
+    pkill -f '/opt/shedos/brain.py' || true
+    eend 0
+}
+
+status() {
+    if pgrep -f '/opt/shedos/brain.py' >/dev/null; then
+        einfo "shedos-brain is running"
+        return 0
+    fi
+    einfo "shedos-brain is not running"
+    return 3
 }

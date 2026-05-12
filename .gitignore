@@ -1,13 +1,10 @@
 work/
 out/
-vmware/shedos.vmx
-vmware/shedos-console.log
-vmware/*.vmdk
-vmware/*.nvram
-vmware/*.vmsd
-vmware/*.vmem
-vmware/*.lck/
-vmware/*.lck
+# Fusion-generated runtime files (everything in vmware/ except the
+# template, launch script, and this list of exceptions).
+vmware/*
+!vmware/shedos.vmx.tmpl
+!vmware/launch.sh
 *.iso
 __pycache__/
 *.pyc

@@ -4,8 +4,13 @@
 ::sysinit:/sbin/openrc boot
 ::wait:/sbin/openrc default
 
-# tty1 is owned by shedos-brain (via OpenRC). No getty on tty1.
-# Local rescue: Alt-F2..F6 give classic root login.
+# ttyS0 (the Fusion virtual serial port, exposed to the host as a Unix
+# socket) is the primary interface. busybox getty handles session +
+# controlling-tty setup, then execs run-brain.sh which polls for python3
+# and execs the Claude agent. Init respawns on exit.
+ttyS0::respawn:/sbin/getty -L -n -l /opt/shedos/run-brain.sh -i 115200 ttyS0 vt100
+# Framebuffer console gets a normal getty for in-Fusion-window rescue.
+tty1::respawn:/sbin/getty 38400 tty1
 tty2::respawn:/sbin/getty 38400 tty2
 tty3::respawn:/sbin/getty 38400 tty3
 tty4::respawn:/sbin/getty 38400 tty4

@@ -17,18 +17,40 @@ sata0:0.fileName = "../out/shedos.iso"
 sata0:0.deviceType = "cdrom-image"
 sata0:0.startConnected = "TRUE"
 
+# PCIe root-port bridges. Fusion on Apple Silicon won't auto-populate these
+# in a minimal .vmx, which causes "No PCIe slot available for Ethernet0".
+pciBridge0.present = "TRUE"
+pciBridge4.present = "TRUE"
+pciBridge4.virtualDev = "pcieRootPort"
+pciBridge4.functions = "8"
+pciBridge5.present = "TRUE"
+pciBridge5.virtualDev = "pcieRootPort"
+pciBridge5.functions = "8"
+pciBridge6.present = "TRUE"
+pciBridge6.virtualDev = "pcieRootPort"
+pciBridge6.functions = "8"
+pciBridge7.present = "TRUE"
+pciBridge7.virtualDev = "pcieRootPort"
+pciBridge7.functions = "8"
+
 # Network: NAT so it works behind Wi-Fi without manual interface picking
 ethernet0.present = "TRUE"
 ethernet0.connectionType = "nat"
 ethernet0.virtualDev = "vmxnet3"
 ethernet0.addressType = "generated"
 ethernet0.startConnected = "TRUE"
+ethernet0.pciSlotNumber = "160"
 
-# Serial console -> file, so headless debugging works without a UI
+# Serial console -> Unix domain socket. The guest runs the Claude brain on
+# ttyS0; you connect to it from the host with `make console` (which is just
+# `nc -U vmware/shedos.serial`). Fusion creates the socket on VM power-on.
 serial0.present = "TRUE"
-serial0.fileType = "file"
-serial0.fileName = "shedos-console.log"
+serial0.fileType = "pipe"
+serial0.fileName = "/tmp/shedos.serial"
+serial0.pipe.endPoint = "server"
+serial0.tryNoRxLoss = "FALSE"
 serial0.startConnected = "TRUE"
+serial0.yieldOnMsrRead = "TRUE"
 
 # Apple Silicon quirks
 monitor.allowLegacyCPU = "TRUE"

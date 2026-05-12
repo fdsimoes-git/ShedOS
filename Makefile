@@ -1,4 +1,4 @@
-.PHONY: iso run vm clean distclean help
+.PHONY: iso run vm console clean distclean help
 
 ISO := out/shedos.iso
 VMX := vmware/shedos.vmx
@@ -8,6 +8,7 @@ help:
 	@echo "  make iso        build out/shedos.iso (set CLAUDE_CODE_OAUTH_TOKEN to bake it in)"
 	@echo "  make vm         render vmware/shedos.vmx from template"
 	@echo "  make run        build ISO + vmx, open in VMware Fusion"
+	@echo "  make console    connect to the brain via the serial socket (nc -U)"
 	@echo "  make ssh        ssh root@<vm-ip> using the key baked into the ISO"
 	@echo "  make ip         print the VM's NAT IP via vmrun"
 	@echo "  make clean      rm work/"
@@ -25,6 +26,18 @@ $(VMX): vmware/shedos.vmx.tmpl $(ISO)
 
 run: $(ISO) $(VMX)
 	./vmware/launch.sh
+
+SOCKET := /tmp/shedos.serial
+
+console:
+	@if [ ! -S $(SOCKET) ]; then \
+		echo "$(SOCKET) doesn't exist yet — start the VM with 'make run' first."; \
+		echo "(Fusion creates the socket on VM power-on. The socket lives in"; \
+		echo " /tmp because /Volumes/Untitled doesn't support Unix sockets.)"; \
+		exit 1; \
+	fi
+	@echo "Connecting to ShedOS brain via serial. Ctrl-C to quit."
+	@nc -U $(SOCKET)
 
 ip:
 	@vmrun getGuestIPAddress $(VMX) 2>/dev/null || echo "VM not running or guest tools missing"
