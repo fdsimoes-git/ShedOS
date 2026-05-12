@@ -160,7 +160,9 @@ chmod 600 "$STAGE/root/.ssh/authorized_keys"
 APKOVL="$WORK/shedos.apkovl.tar.gz"
 log "building $APKOVL"
 # Tarball root contains etc/, root/, opt/ directly — Alpine convention.
-(cd "$STAGE" && tar -czf "$APKOVL" etc root opt)
+# Force uid/gid 0 so /root/.ssh/authorized_keys etc. are owned by root in
+# the guest (otherwise sshd's strict-mode check rejects login).
+(cd "$STAGE" && tar -czf "$APKOVL" --uid 0 --gid 0 --uname root --gname root etc root opt)
 
 # --- 7. Copy ISO contents into a writable tree ------------------------------
 log "extracting Alpine ISO"

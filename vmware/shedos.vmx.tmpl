@@ -17,6 +17,14 @@ sata0:0.fileName = "../out/shedos.iso"
 sata0:0.deviceType = "cdrom-image"
 sata0:0.startConnected = "TRUE"
 
+# USB host controllers. Without these, Fusion presents no USB bus to the
+# guest, so no virtual keyboard / mouse hardware appears. xHCI is the
+# modern (USB 3) controller; UHCI/EHCI are legacy fallbacks some Fusion
+# builds need.
+usb.present = "TRUE"
+ehci.present = "TRUE"
+usb_xhci.present = "TRUE"
+
 # PCIe root-port bridges. Fusion on Apple Silicon won't auto-populate these
 # in a minimal .vmx, which causes "No PCIe slot available for Ethernet0".
 pciBridge0.present = "TRUE"
