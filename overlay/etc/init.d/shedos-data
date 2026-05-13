@@ -25,6 +25,11 @@ start() {
         return 0
     fi
 
+    # alpine-virt ships ext4 as a module, not built-in. Load it before
+    # mounting — without this, busybox `mount` returns a misleading
+    # "Invalid argument" instead of "filesystem not supported".
+    /sbin/modprobe ext4 2>/dev/null || true
+
     mkdir -p /data
 
     # Already mounted? nothing to do.
@@ -54,7 +59,7 @@ start() {
             || { eerror "mkfs failed"; eend 1; return 1; }
     fi
 
-    /bin/mount /dev/sda1 /data || { eerror "mount failed"; eend 1; return 1; }
+    /bin/mount -t ext4 /dev/sda1 /data || { eerror "mount failed"; eend 1; return 1; }
     chmod 0755 /data
     mkdir -p /data/shedos /data/log
     eend 0
