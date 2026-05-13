@@ -8,6 +8,7 @@ ANTHROPIC_VERSION = "2023-06-01"
 
 TOKEN_PATH = "/etc/shedos/token"
 PERSONA_PATH = "/etc/shedos/persona.txt"
+HISTORY_DIR = "/var/lib/shedos"
 
 MAX_ITERATIONS = 30
 MAX_TOKENS = 8192

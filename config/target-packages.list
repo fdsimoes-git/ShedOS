@@ -1,0 +1,34 @@
+# Packages installed to /mnt during install. Drives apk --root --initdb add.
+# Lines starting with # are ignored.
+
+# Core
+alpine-base
+alpine-conf
+linux-virt
+linux-firmware-none
+openrc
+busybox-extras
+mkinitfs
+
+# Storage / disk maintenance
+e2fsprogs
+dosfstools
+parted
+
+# Bootloader
+grub
+grub-efi
+efibootmgr
+
+# Networking + base userland
+openssh
+ca-certificates
+iproute2
+curl
+
+# Brain runtime
+python3
+py3-httpx
+
+# Convenience
+htop

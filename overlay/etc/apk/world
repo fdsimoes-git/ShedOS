@@ -1,6 +1,7 @@
 alpine-base
-openssh
+linux-virt
 openrc
+openssh
 python3
 py3-httpx
 ca-certificates
@@ -8,3 +9,9 @@ curl
 htop
 busybox-extras
 iproute2
+e2fsprogs
+parted
+grub
+grub-efi
+efibootmgr
+mkinitfs

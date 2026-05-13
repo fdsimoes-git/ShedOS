@@ -1,0 +1,264 @@
+#!/bin/sh
+# ShedOS installer — runs on first boot from the ISO. Lays Alpine + ShedOS
+# down on /dev/sda as a persistent install, then reboots.
+#
+# Idempotency: if /dev/sda already has a labeled ShedOS root partition with
+# /etc/alpine-release populated, the installer assumes we're already
+# installed and just reboots (UEFI should boot from disk in that case).
+
+set -e
+
+DISK=/dev/sda
+ESP=/dev/sda1
+ROOT=/dev/sda2
+HOME_PART=/dev/sda3
+MNT=/mnt
+
+OVERLAY_TARBALL=/opt/shedos-installer/overlay.tar.gz
+PACKAGES_FILE=/opt/shedos-installer/packages.list
+ALPINE_VERSION_FILE=/etc/alpine-release
+ALPINE_REPO_BASE="http://dl-cdn.alpinelinux.org/alpine"
+ALPINE_VERSION="3.23"
+ARCH="aarch64"
+
+say() { printf '\n\033[1;34m[shedos-install]\033[0m %s\n' "$*"; }
+die() { printf '\n\033[1;31m[shedos-install:error]\033[0m %s\n' "$*"; exit 1; }
+
+banner() {
+    cat <<'BANNER'
+
+╔══════════════════════════════════════════════════════════════╗
+║  ShedOS installer                                            ║
+║  About to install Alpine 3.23 + ShedOS to /dev/sda           ║
+║  Partition scheme:                                           ║
+║    /dev/sda1   256 MiB   FAT32   /boot/efi                   ║
+║    /dev/sda2    4 GiB    ext4    /                           ║
+║    /dev/sda3    rest     ext4    /home                       ║
+║                                                              ║
+║  ALL DATA ON /dev/sda WILL BE ERASED.                        ║
+╚══════════════════════════════════════════════════════════════╝
+
+BANNER
+}
+
+already_installed() {
+    # Best-effort: probe /dev/sda2 for ext4 with alpine-release inside.
+    blkid "$ROOT" 2>/dev/null | grep -q 'TYPE="ext4"' || return 1
+    mount -t ext4 "$ROOT" "$MNT" 2>/dev/null || return 1
+    if [ -f "$MNT$ALPINE_VERSION_FILE" ] && [ -d "$MNT/opt/shedos" ]; then
+        umount "$MNT"
+        return 0
+    fi
+    umount "$MNT" 2>/dev/null || true
+    return 1
+}
+
+ensure_tools() {
+    say "loading kernel modules"
+    modprobe ext4 2>/dev/null || true
+    modprobe vfat 2>/dev/null || true
+    modprobe nls_iso8859-1 2>/dev/null || true
+    modprobe nls_cp437 2>/dev/null || true
+
+    say "installing installer-side tools (parted, e2fsprogs, dosfstools, apk-tools)"
+    apk update >/dev/null 2>&1 || true
+    apk add --no-progress parted e2fsprogs dosfstools apk-tools >/dev/null
+}
+
+wait_for_network() {
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        if nslookup dl-cdn.alpinelinux.org >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    die "no network — DHCP didn't bring up eth0 / DNS unresolvable"
+}
+
+partition_disk() {
+    say "partitioning $DISK (GPT, ESP+root+home)"
+    parted -s "$DISK" mklabel gpt \
+        mkpart ESP fat32 1MiB 257MiB \
+        set 1 esp on \
+        mkpart shedos-root ext4 257MiB 4353MiB \
+        mkpart shedos-home ext4 4353MiB 100%
+
+    # Re-read partition table; partprobe is in parted package
+    partprobe "$DISK" 2>/dev/null || true
+    for i in 1 2 3 4 5; do
+        [ -b "$ESP" ] && [ -b "$ROOT" ] && [ -b "$HOME_PART" ] && return 0
+        sleep 1
+    done
+    die "kernel didn't pick up new partition table"
+}
+
+format_disk() {
+    say "formatting partitions"
+    mkfs.vfat -F32 -n SHEDOS-ESP "$ESP" >/dev/null
+    mkfs.ext4 -q -F -L shedos-root "$ROOT"
+    mkfs.ext4 -q -F -L shedos-home "$HOME_PART"
+}
+
+mount_target() {
+    say "mounting target filesystems"
+    mount -t ext4 "$ROOT" "$MNT"
+    mkdir -p "$MNT/boot/efi" "$MNT/home"
+    mount -t vfat "$ESP" "$MNT/boot/efi"
+    mount -t ext4 "$HOME_PART" "$MNT/home"
+}
+
+install_base() {
+    say "installing Alpine + ShedOS packages into $MNT (this is the slow step)"
+    # Configure repositories for apk --root
+    mkdir -p "$MNT/etc/apk"
+    cat > "$MNT/etc/apk/repositories" <<EOF
+$ALPINE_REPO_BASE/v$ALPINE_VERSION/main
+$ALPINE_REPO_BASE/v$ALPINE_VERSION/community
+EOF
+    # Bring the apk keys over from the running installer
+    mkdir -p "$MNT/etc/apk/keys"
+    [ -d /etc/apk/keys ] && cp -a /etc/apk/keys/. "$MNT/etc/apk/keys/" \
+        || die "no apk keys on installer — can't authenticate target packages"
+
+    # Initial DB + base
+    PKGS=$(grep -vE '^#|^$' "$PACKAGES_FILE" | tr '\n' ' ')
+    apk --root "$MNT" --initdb add $PKGS
+}
+
+apply_overlay() {
+    say "applying ShedOS overlay to $MNT"
+    tar -xzf "$OVERLAY_TARBALL" -C "$MNT"
+
+    # Token + ssh key were baked into the installer apkovl by build.sh.
+    # Copy them onto the target if present.
+    if [ -f /etc/shedos/token ]; then
+        install -d -m 0700 "$MNT/etc/shedos"
+        install -m 0600 /etc/shedos/token "$MNT/etc/shedos/token"
+    fi
+    if [ -f /root/.ssh/authorized_keys ]; then
+        install -d -m 0700 "$MNT/root/.ssh"
+        install -m 0600 /root/.ssh/authorized_keys "$MNT/root/.ssh/authorized_keys"
+    fi
+}
+
+write_fstab() {
+    say "writing /etc/fstab"
+    esp_uuid=$(blkid -s UUID -o value "$ESP")
+    root_uuid=$(blkid -s UUID -o value "$ROOT")
+    home_uuid=$(blkid -s UUID -o value "$HOME_PART")
+    cat > "$MNT/etc/fstab" <<EOF
+UUID=$root_uuid  /          ext4  rw,relatime  0 1
+UUID=$esp_uuid   /boot/efi  vfat  rw,umask=0077,nofail  0 2
+UUID=$home_uuid  /home      ext4  rw,relatime  0 2
+tmpfs            /tmp       tmpfs nosuid,nodev  0 0
+proc             /proc      proc  defaults     0 0
+sysfs            /sys       sysfs defaults     0 0
+EOF
+}
+
+chroot_setup() {
+    say "chroot setup: services, initramfs, bootloader"
+
+    # Bind-mount kernel filesystems for the chroot
+    mount -t proc proc "$MNT/proc"
+    mount -t sysfs sysfs "$MNT/sys"
+    mount --bind /dev "$MNT/dev"
+    mount -t devpts devpts "$MNT/dev/pts" 2>/dev/null || true
+
+    chroot "$MNT" /bin/sh <<'CHROOT'
+set -e
+
+# Enable OpenRC services
+rc-update add devfs sysinit
+rc-update add dmesg sysinit
+rc-update add mdev sysinit
+rc-update add hwdrivers sysinit
+rc-update add hwclock boot
+rc-update add modules boot
+rc-update add sysctl boot
+rc-update add hostname boot
+rc-update add bootmisc boot
+rc-update add syslog boot
+rc-update add networking boot
+rc-update add local default
+rc-update add sshd default
+rc-update add mount-ro shutdown
+rc-update add killprocs shutdown
+rc-update add savecache shutdown
+
+# Generate SSH host keys
+ssh-keygen -A
+
+# Generate initramfs
+KVER=$(ls /lib/modules/ | head -1)
+mkinitfs "$KVER"
+
+# Write /etc/default/grub
+cat > /etc/default/grub <<'GRUB'
+GRUB_DISTRIBUTOR="ShedOS"
+GRUB_TIMEOUT=1
+GRUB_CMDLINE_LINUX_DEFAULT="console=tty0 console=ttyS0,115200 quiet"
+GRUB_TERMINAL="console serial"
+GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"
+GRUB_DISABLE_OS_PROBER=true
+GRUB
+
+# Install GRUB to the ESP using --removable so UEFI finds it at the
+# fallback path \EFI\BOOT\BOOTAA64.EFI without needing NVRAM entries.
+grub-install --target=arm64-efi --efi-directory=/boot/efi \
+             --removable --no-nvram
+
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# Set root password locked (key-only login via sshd_config)
+passwd -l root || true
+
+# Empty the apk cache to slim the image
+apk cache clean >/dev/null 2>&1 || true
+CHROOT
+}
+
+unmount_target() {
+    say "unmounting"
+    umount "$MNT/dev/pts" 2>/dev/null || true
+    umount "$MNT/dev" 2>/dev/null || true
+    umount "$MNT/sys"
+    umount "$MNT/proc"
+    umount "$MNT/home"
+    umount "$MNT/boot/efi"
+    umount "$MNT"
+    sync
+}
+
+install() {
+    banner
+    ensure_tools
+    wait_for_network
+    partition_disk
+    format_disk
+    mount_target
+    install_base
+    apply_overlay
+    write_fstab
+    chroot_setup
+    unmount_target
+
+    say "install complete. rebooting in 5s (VM will boot from /dev/sda)..."
+    sleep 5
+    reboot
+    # If reboot doesn't trip (running inside something weird), hang.
+    while :; do sleep 60; done
+}
+
+# --- Entry point -------------------------------------------------------------
+
+if already_installed; then
+    say "found existing ShedOS install on $ROOT — booting that instead"
+    say "if you wanted to REinstall, wipe /dev/sda first (parted /dev/sda mklabel gpt)"
+    say "rebooting in 5s..."
+    sleep 5
+    reboot
+    while :; do sleep 60; done
+fi
+
+install
