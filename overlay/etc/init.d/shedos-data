@@ -1,0 +1,67 @@
+#!/sbin/openrc-run
+
+# Bring up the persistent data disk at /data.
+#
+# First boot: detects a fresh /dev/sda, partitions it (GPT, one full-disk
+# ext4 partition), and labels it shedos-data. Subsequent boots just mount.
+#
+# Brains read/write conversation history at /data/shedos/brain-<tty>.jsonl
+# so reboots don't lose context.
+
+name="shedos-data"
+description="Mount persistent /data disk (auto-init on first boot)"
+
+depend() {
+    need localmount
+    before local sshd
+}
+
+start() {
+    ebegin "Preparing /data"
+
+    if [ ! -b /dev/sda ]; then
+        einfo "no /dev/sda — persistence disabled this boot"
+        eend 0
+        return 0
+    fi
+
+    mkdir -p /data
+
+    # Already mounted? nothing to do.
+    if mountpoint -q /data 2>/dev/null; then
+        eend 0
+        return 0
+    fi
+
+    # If /dev/sda1 doesn't exist yet, this is a fresh disk — partition it.
+    if [ ! -b /dev/sda1 ]; then
+        einfo "first-boot: partitioning /dev/sda"
+        /usr/sbin/parted -s /dev/sda mklabel gpt mkpart primary ext4 1MiB 100% \
+            || { eerror "parted failed"; eend 1; return 1; }
+        # Re-read partition table
+        /sbin/partprobe /dev/sda 2>/dev/null || true
+        # Sometimes partition appears as /dev/sda1, sometimes needs a moment
+        for i in 1 2 3 4 5; do
+            [ -b /dev/sda1 ] && break
+            sleep 1
+        done
+    fi
+
+    # If /dev/sda1 has no filesystem, make one.
+    if ! /sbin/blkid /dev/sda1 >/dev/null 2>&1; then
+        einfo "first-boot: mkfs.ext4 /dev/sda1"
+        /sbin/mkfs.ext4 -q -F -L shedos-data /dev/sda1 \
+            || { eerror "mkfs failed"; eend 1; return 1; }
+    fi
+
+    /bin/mount /dev/sda1 /data || { eerror "mount failed"; eend 1; return 1; }
+    chmod 0755 /data
+    mkdir -p /data/shedos /data/log
+    eend 0
+}
+
+stop() {
+    ebegin "Unmounting /data"
+    /bin/umount /data 2>/dev/null
+    eend 0
+}

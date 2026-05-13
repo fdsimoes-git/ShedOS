@@ -4,7 +4,7 @@
 
 set -e
 
-PKGS="openssh python3 py3-httpx ca-certificates curl htop iproute2"
+PKGS="openssh python3 py3-httpx ca-certificates curl htop iproute2 e2fsprogs parted"
 
 # Wait briefly for network/DNS — `local` runs after `net` but DHCP may still be settling.
 for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -28,6 +28,10 @@ echo 1 4 1 7 > /proc/sys/kernel/printk 2>/dev/null || true
 
 # Start sshd now that openssh is installed (it may not have been at boot time).
 /sbin/rc-service sshd start >/dev/null 2>&1 || true
+
+# Initialize + mount the persistent /data disk now that e2fsprogs/parted
+# are installed. Safe to call repeatedly; service is idempotent.
+/sbin/rc-service shedos-data start >/dev/null 2>&1 || true
 
 # Helpful note dumped to the framebuffer console: if the serial pipe path
 # fails for any reason, the user can still SSH in.

@@ -150,10 +150,32 @@ and add them to the loop in `build.sh:9`.
 `make ssh` won't work until the local.d/shedos-packages.start completes
 the initial `apk add openssh`. Give it 30–60s after the kernel boots.
 
+## Persistence — `/data`
+
+Root is tmpfs by design (Alpine diskless mode + apkovl). To survive reboots
+ShedOS attaches a separate **4GB ext4 disk** mounted at `/data`:
+
+- `vmware/shedos-data.vmdk` is auto-created on first `make iso` via
+  `vmware-vdiskmanager`. It persists across `make iso` runs — the build
+  pipeline only touches it if it doesn't exist.
+- On first boot, `shedos-data` OpenRC service GPT-partitions and ext4-formats
+  the disk, then mounts it at `/data`. Subsequent boots just mount.
+- Each brain auto-persists its conversation history to
+  `/data/shedos/brain-<tty>.jsonl` (appended per message). On reboot, the
+  brain reloads the history and you continue the same conversation.
+
+When the agent wants to save anything long-lived (logs, datasets, scripts,
+state) the persona tells it to put it under `/data`.
+
+To wipe `/data` and start fresh:
+```bash
+make wipe-data
+```
+
 ## What's NOT here yet
 
-- Persistent storage (root is tmpfs; everything dies on reboot)
 - TLS for the OAuth endpoint pinning — relies on system CA bundle
 - A way to update the brain without rebuilding the ISO (you can `scp` new
-  files into `/opt/shedos/` and `rc-service shedos-brain restart` for now)
+  files into `/opt/shedos/` and `pkill -f brain.py` to make getty respawn
+  with the new code)
 - x86_64 build (only arm64 / Apple Silicon Fusion)

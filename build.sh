@@ -39,6 +39,20 @@ require python3 python
 
 mkdir -p "$WORK" "$OUT" "$ISO_ORIG_DIR"
 
+# --- 0. Ensure the persistent data VMDK exists ------------------------------
+DATA_VMDK="$HERE/vmware/shedos-data.vmdk"
+if [[ ! -f "$DATA_VMDK" ]]; then
+    log "creating 4GB persistent data disk: $DATA_VMDK"
+    VDM="/Applications/VMware Fusion.app/Contents/Library/vmware-vdiskmanager"
+    if [[ -x "$VDM" ]]; then
+        "$VDM" -c -s 4GB -a lsilogic -t 0 "$DATA_VMDK" >/dev/null \
+            || die "vmware-vdiskmanager failed to create $DATA_VMDK"
+    else
+        log "warning: vmware-vdiskmanager not found at $VDM"
+        log "the VM will boot without /data persistence — Fusion may auto-create on first boot"
+    fi
+fi
+
 # --- 1. Fetch + verify the Alpine ISO ---------------------------------------
 ISO_PATH="$ISO_ORIG_DIR/$ISO_NAME"
 SHA_URL="${ISO_URL}.sha256"
@@ -87,6 +101,8 @@ ln -sf /etc/init.d/networking  "$STAGE/etc/runlevels/boot/networking"
 
 ln -sf /etc/init.d/local       "$STAGE/etc/runlevels/default/local"
 ln -sf /etc/init.d/sshd        "$STAGE/etc/runlevels/default/sshd"
+# shedos-data is started manually by local.d/shedos-packages.start after
+# apk has installed e2fsprogs+parted (they aren't on the base virt ISO).
 # shedos-brain is launched by getty via inittab — see overlay/etc/inittab.
 # We keep the init.d file around for manual `rc-service shedos-brain restart`,
 # but don't activate it in the default runlevel.

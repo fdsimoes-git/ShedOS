@@ -8,3 +8,5 @@ curl
 htop
 busybox-extras
 iproute2
+e2fsprogs
+parted

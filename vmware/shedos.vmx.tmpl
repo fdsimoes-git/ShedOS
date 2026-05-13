@@ -17,6 +17,13 @@ sata0:0.fileName = "../out/shedos.iso"
 sata0:0.deviceType = "cdrom-image"
 sata0:0.startConnected = "TRUE"
 
+# Persistent data disk. Mounted as /data inside the guest by the
+# shedos-data OpenRC service. Survives reboots; nuke with `make wipe-data`.
+sata0:1.present = "TRUE"
+sata0:1.fileName = "shedos-data.vmdk"
+sata0:1.deviceType = "disk"
+sata0:1.startConnected = "TRUE"
+
 # USB host controllers. Without these, Fusion presents no USB bus to the
 # guest, so no virtual keyboard / mouse hardware appears. xHCI is the
 # modern (USB 3) controller; UHCI/EHCI are legacy fallbacks some Fusion

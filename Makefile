@@ -1,4 +1,4 @@
-.PHONY: iso run vm console clean distclean help
+.PHONY: iso run vm console wipe-data clean distclean help
 
 ISO := out/shedos.iso
 VMX := vmware/shedos.vmx
@@ -11,8 +11,9 @@ help:
 	@echo "  make console    connect to the brain via the serial socket (nc -U)"
 	@echo "  make ssh        ssh root@<vm-ip> using the key baked into the ISO"
 	@echo "  make ip         print the VM's NAT IP via vmrun"
+	@echo "  make wipe-data  delete the /data VMDK (next boot reinitializes)"
 	@echo "  make clean      rm work/"
-	@echo "  make distclean  rm work/ out/ vmware/shedos.vmx"
+	@echo "  make distclean  rm work/ out/ vmware/shedos.vmx + data VMDK"
 
 iso: $(ISO)
 
@@ -48,9 +49,15 @@ ssh:
 	 echo "ssh root@$$ip"; \
 	 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$$ip
 
+wipe-data:
+	@echo "Stopping VM..."
+	@vmrun stop vmware/shedos.vmx hard 2>/dev/null || true
+	rm -f vmware/shedos-data.vmdk vmware/shedos-data-*.vmdk vmware/shedos-data.vmdk.lck
+	@echo "Persistent /data wiped. Next boot will reinitialize (fresh ext4)."
+
 clean:
 	rm -rf work
 
-distclean: clean
+distclean: clean wipe-data
 	rm -rf out
 	rm -f vmware/shedos.vmx vmware/shedos-console.log vmware/*.vmdk vmware/*.nvram vmware/*.vmsd vmware/*.vmem
