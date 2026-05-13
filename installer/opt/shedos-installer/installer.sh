@@ -25,7 +25,7 @@ if [ -e "$LOCKFILE" ]; then
     fi
 fi
 echo $$ > "$LOCKFILE"
-trap 'rc=$?; if [ $rc -ne 0 ]; then echo; echo "[shedos-install] install failed (rc=$rc). Sleeping 60s before getty respawns."; sleep 60; fi; rm -f "$LOCKFILE"' EXIT
+trap 'rc=$?; echo; echo "[shedos-install] script exiting (rc=$rc) — DO NOT respawn (getty wait)"; if [ $rc -ne 0 ]; then echo "[shedos-install] FAILURE. Sleeping forever (Ctrl-Alt-F2 to a rescue tty if you want to debug)."; while :; do sleep 3600; done; fi; rm -f "$LOCKFILE"' EXIT
 
 DISK=/dev/sda
 ESP=/dev/sda1
@@ -95,6 +95,17 @@ wait_for_network() {
 }
 
 partition_disk() {
+    # If a previous (failed) install left /dev/sda partitions mounted (e.g.,
+    # nlplug-findfs scanning), drop them before partitioning.
+    say "ensuring $DISK is not in use"
+    for p in /dev/sda1 /dev/sda2 /dev/sda3 /dev/sda4; do
+        if mount | grep -q "^$p "; then
+            say "  unmounting $p (was busy)"
+            umount -f "$p" 2>/dev/null || umount -l "$p" 2>/dev/null || true
+        fi
+    done
+    sync; sleep 1
+
     say "partitioning $DISK (GPT, ESP+root+home)"
     parted -s "$DISK" mklabel gpt \
         mkpart ESP fat32 1MiB 257MiB \
@@ -150,18 +161,25 @@ EOF
 
 apply_overlay() {
     say "applying ShedOS overlay to $MNT"
-    tar -xzf "$OVERLAY_TARBALL" -C "$MNT"
+    [ -f "$OVERLAY_TARBALL" ] || die "overlay tarball not found at $OVERLAY_TARBALL"
+    tar -xzf "$OVERLAY_TARBALL" -C "$MNT" 2>&1 || die "tar -xzf overlay failed"
+    say "overlay applied. files written:"
+    find "$MNT/opt/shedos" "$MNT/etc/shedos" "$MNT/etc/init.d/shedos-brain" 2>&1 | head -20 || true
 
     # Token + ssh key were baked into the installer apkovl by build.sh.
-    # Copy them onto the target if present.
     if [ -f /etc/shedos/token ]; then
+        say "copying token from installer -> target"
         install -d -m 0700 "$MNT/etc/shedos"
         install -m 0600 /etc/shedos/token "$MNT/etc/shedos/token"
+    else
+        say "no token on installer (first-boot will prompt)"
     fi
     if [ -f /root/.ssh/authorized_keys ]; then
+        say "copying ssh authorized_keys -> target"
         install -d -m 0700 "$MNT/root/.ssh"
         install -m 0600 /root/.ssh/authorized_keys "$MNT/root/.ssh/authorized_keys"
     fi
+    say "apply_overlay done"
 }
 
 write_fstab() {
@@ -169,6 +187,7 @@ write_fstab() {
     esp_uuid=$(blkid -s UUID -o value "$ESP")
     root_uuid=$(blkid -s UUID -o value "$ROOT")
     home_uuid=$(blkid -s UUID -o value "$HOME_PART")
+    say "  esp=$esp_uuid  root=$root_uuid  home=$home_uuid"
     cat > "$MNT/etc/fstab" <<EOF
 UUID=$root_uuid  /          ext4  rw,relatime  0 1
 UUID=$esp_uuid   /boot/efi  vfat  rw,umask=0077,nofail  0 2
@@ -177,6 +196,7 @@ tmpfs            /tmp       tmpfs nosuid,nodev  0 0
 proc             /proc      proc  defaults     0 0
 sysfs            /sys       sysfs defaults     0 0
 EOF
+    say "fstab written"
 }
 
 chroot_setup() {
@@ -188,35 +208,25 @@ chroot_setup() {
     mount --bind /dev "$MNT/dev"
     mount -t devpts devpts "$MNT/dev/pts" 2>/dev/null || true
 
-    chroot "$MNT" /bin/sh <<'CHROOT'
+    chroot "$MNT" /bin/sh <<'CHROOT' 2>&1
 set -e
+say() { printf '\n\033[1;34m[shedos-install:chroot]\033[0m %s\n' "$*"; }
 
-# Enable OpenRC services
-rc-update add devfs sysinit
-rc-update add dmesg sysinit
-rc-update add mdev sysinit
-rc-update add hwdrivers sysinit
-rc-update add hwclock boot
-rc-update add modules boot
-rc-update add sysctl boot
-rc-update add hostname boot
-rc-update add bootmisc boot
-rc-update add syslog boot
-rc-update add networking boot
-rc-update add local default
-rc-update add sshd default
-rc-update add mount-ro shutdown
-rc-update add killprocs shutdown
-rc-update add savecache shutdown
+say "enabling OpenRC services"
+for svc in devfs dmesg mdev hwdrivers; do rc-update add $svc sysinit; done
+for svc in hwclock modules sysctl hostname bootmisc syslog networking; do rc-update add $svc boot; done
+for svc in local sshd; do rc-update add $svc default; done
+for svc in mount-ro killprocs savecache; do rc-update add $svc shutdown; done
 
-# Generate SSH host keys
+say "generating SSH host keys"
 ssh-keygen -A
 
-# Generate initramfs
+say "generating initramfs"
 KVER=$(ls /lib/modules/ | head -1)
+say "  kernel: $KVER"
 mkinitfs "$KVER"
 
-# Write /etc/default/grub
+say "writing /etc/default/grub"
 cat > /etc/default/grub <<'GRUB'
 GRUB_DISTRIBUTOR="ShedOS"
 GRUB_TIMEOUT=1
@@ -226,19 +236,25 @@ GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"
 GRUB_DISABLE_OS_PROBER=true
 GRUB
 
-# Install GRUB to the ESP using --removable so UEFI finds it at the
-# fallback path \EFI\BOOT\BOOTAA64.EFI without needing NVRAM entries.
+say "grub-install --target=arm64-efi --efi-directory=/boot/efi --removable --no-nvram"
 grub-install --target=arm64-efi --efi-directory=/boot/efi \
-             --removable --no-nvram
+             --removable --no-nvram --verbose 2>&1 | tail -20
 
+say "verifying BOOTAA64.EFI is in place"
+ls -la /boot/efi/EFI/BOOT/ 2>&1 || say "  /boot/efi/EFI/BOOT missing!"
+
+say "grub-mkconfig"
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# Set root password locked (key-only login via sshd_config)
+say "locking root password (key-only ssh)"
 passwd -l root || true
 
-# Empty the apk cache to slim the image
+say "cleaning apk cache"
 apk cache clean >/dev/null 2>&1 || true
+
+say "chroot section done"
 CHROOT
+    say "chroot_setup returned (rc=$?)"
 }
 
 unmount_target() {
@@ -266,11 +282,18 @@ install() {
     chroot_setup
     unmount_target
 
-    say "install complete. rebooting in 5s (VM will boot from /dev/sda)..."
+    say "==================================================================="
+    say "INSTALL COMPLETE. Rebooting in 5s (VM should boot from /dev/sda)..."
+    say "==================================================================="
     sleep 5
-    reboot
-    # If reboot doesn't trip (running inside something weird), hang.
-    while :; do sleep 60; done
+    sync
+    /sbin/reboot
+    # If reboot didn't trip, force it the kernel way
+    sleep 5
+    echo b > /proc/sysrq-trigger 2>/dev/null || true
+    # Final fallback: hang so getty doesn't respawn into another install
+    say "reboot didn't take effect — hanging to prevent respawn loop"
+    while :; do sleep 3600; done
 }
 
 # --- Entry point -------------------------------------------------------------
