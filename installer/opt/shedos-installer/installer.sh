@@ -5,8 +5,27 @@
 # Idempotency: if /dev/sda already has a labeled ShedOS root partition with
 # /etc/alpine-release populated, the installer assumes we're already
 # installed and just reboots (UEFI should boot from disk in that case).
+#
+# Re-entry guard: if getty respawns the script after a crash, the lock
+# prevents a second parallel install from racing on the disk. The lock
+# is held for the lifetime of the install; on success we reboot, on
+# error we sleep so getty doesn't immediately respawn into a loop.
 
 set -e
+
+# Bail if another instance is already running (e.g., racey getty respawn).
+LOCKFILE=/run/shedos-installer.lock
+if [ -e "$LOCKFILE" ]; then
+    OWNER_PID=$(cat "$LOCKFILE" 2>/dev/null)
+    if [ -n "$OWNER_PID" ] && kill -0 "$OWNER_PID" 2>/dev/null; then
+        printf '\n[shedos-install] another installer (pid %s) is already running. Sleeping.\n' "$OWNER_PID"
+        # Sleep forever so getty doesn't respawn into a tight loop
+        sleep 86400
+        exit 0
+    fi
+fi
+echo $$ > "$LOCKFILE"
+trap 'rc=$?; if [ $rc -ne 0 ]; then echo; echo "[shedos-install] install failed (rc=$rc). Sleeping 60s before getty respawns."; sleep 60; fi; rm -f "$LOCKFILE"' EXIT
 
 DISK=/dev/sda
 ESP=/dev/sda1
@@ -84,12 +103,16 @@ partition_disk() {
         mkpart shedos-home ext4 4353MiB 100%
 
     # Re-read partition table; partprobe is in parted package
+    sync
     partprobe "$DISK" 2>/dev/null || true
-    for i in 1 2 3 4 5; do
+    sleep 1
+    # Some kernels need a kick — try mdev / udev triggers
+    [ -x /sbin/mdev ] && /sbin/mdev -s 2>/dev/null || true
+    for i in $(seq 1 30); do
         [ -b "$ESP" ] && [ -b "$ROOT" ] && [ -b "$HOME_PART" ] && return 0
         sleep 1
     done
-    die "kernel didn't pick up new partition table"
+    die "kernel didn't pick up new partition table after 30s"
 }
 
 format_disk() {

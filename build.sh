@@ -205,6 +205,8 @@ rm -rf "$ISO_RW_DIR"
 mkdir -p "$ISO_RW_DIR"
 xorriso -osirrox on -indev "$ISO_PATH" -extract / "$ISO_RW_DIR" >/dev/null
 chmod -R u+w "$ISO_RW_DIR"
+# Strip macOS metadata that piggybacks on the exFAT working volume
+find "$ISO_RW_DIR" -name '._*' -delete 2>/dev/null || true
 
 # --- 8. Drop apkovl on the ISO root + name copies ---------------------------
 cp "$APKOVL" "$ISO_RW_DIR/localhost.apkovl.tar.gz"
