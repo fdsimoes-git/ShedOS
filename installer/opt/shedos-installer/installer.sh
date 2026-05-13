@@ -182,11 +182,19 @@ apply_overlay() {
     say "apply_overlay done"
 }
 
+_blkid_uuid() {
+    # busybox blkid ignores -s/-o flags and dumps the full line. Parse it
+    # ourselves with sed for reliability across alpine versions.
+    /sbin/blkid "$1" 2>/dev/null | sed -n 's/.*UUID="\([^"]*\)".*/\1/p'
+}
+
 write_fstab() {
     say "writing /etc/fstab"
-    esp_uuid=$(blkid -s UUID -o value "$ESP")
-    root_uuid=$(blkid -s UUID -o value "$ROOT")
-    home_uuid=$(blkid -s UUID -o value "$HOME_PART")
+    esp_uuid=$(_blkid_uuid "$ESP")
+    root_uuid=$(_blkid_uuid "$ROOT")
+    home_uuid=$(_blkid_uuid "$HOME_PART")
+    [ -n "$esp_uuid" ] && [ -n "$root_uuid" ] && [ -n "$home_uuid" ] \
+        || die "failed to read partition UUIDs (esp=$esp_uuid root=$root_uuid home=$home_uuid)"
     say "  esp=$esp_uuid  root=$root_uuid  home=$home_uuid"
     cat > "$MNT/etc/fstab" <<EOF
 UUID=$root_uuid  /          ext4  rw,relatime  0 1
@@ -227,10 +235,14 @@ say "  kernel: $KVER"
 mkinitfs "$KVER"
 
 say "writing /etc/default/grub"
+# rootfstype=ext4 is REQUIRED — busybox's mount in the initramfs can't
+# auto-detect a filesystem when root= is a UUID, so it fails with a
+# misleading "No such file or directory" error without this hint.
+# rootwait gives the SATA layer time to finish probing before mount.
 cat > /etc/default/grub <<'GRUB'
 GRUB_DISTRIBUTOR="ShedOS"
 GRUB_TIMEOUT=1
-GRUB_CMDLINE_LINUX_DEFAULT="console=tty0 console=ttyS0,115200 quiet"
+GRUB_CMDLINE_LINUX_DEFAULT="rootfstype=ext4 rootwait console=tty0 console=ttyS0,115200 quiet"
 GRUB_TERMINAL="console serial"
 GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"
 GRUB_DISABLE_OS_PROBER=true
