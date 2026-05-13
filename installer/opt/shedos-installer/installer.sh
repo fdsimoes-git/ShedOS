@@ -169,15 +169,15 @@ apply_overlay() {
     # Token + ssh key were baked into the installer apkovl by build.sh.
     if [ -f /etc/shedos/token ]; then
         say "copying token from installer -> target"
-        install -d -m 0700 "$MNT/etc/shedos"
-        install -m 0600 /etc/shedos/token "$MNT/etc/shedos/token"
+        /usr/bin/install -d -m 0700 "$MNT/etc/shedos"
+        /usr/bin/install -m 0600 /etc/shedos/token "$MNT/etc/shedos/token"
     else
         say "no token on installer (first-boot will prompt)"
     fi
     if [ -f /root/.ssh/authorized_keys ]; then
         say "copying ssh authorized_keys -> target"
-        install -d -m 0700 "$MNT/root/.ssh"
-        install -m 0600 /root/.ssh/authorized_keys "$MNT/root/.ssh/authorized_keys"
+        /usr/bin/install -d -m 0700 "$MNT/root/.ssh"
+        /usr/bin/install -m 0600 /root/.ssh/authorized_keys "$MNT/root/.ssh/authorized_keys"
     fi
     say "apply_overlay done"
 }
@@ -269,7 +269,7 @@ unmount_target() {
     sync
 }
 
-install() {
+do_install() {
     banner
     ensure_tools
     wait_for_network
@@ -307,4 +307,4 @@ if already_installed; then
     while :; do sleep 60; done
 fi
 
-install
+do_install
