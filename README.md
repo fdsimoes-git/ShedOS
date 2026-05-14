@@ -18,7 +18,7 @@ shell of a self-contained installed system.
 │    sata0:1 = shedos-system.vmdk   (16 GB, empty)            │
 │                                                             │
 │  UEFI finds no bootloader on disk -> falls back to the CD.  │
-│  Installer runs on tty1 + ttyS0:                            │
+│  Installer runs on ttyS0 (tty1 shows a banner):             │
 │    parted GPT  | mkfs vfat/ext4/ext4                        │
 │    apk --root /mnt --initdb add (target-packages.list)      │
 │    extract overlay/ -> /mnt                                 │

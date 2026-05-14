@@ -114,6 +114,14 @@ ALPINE_VERSION="${ALPINE_MAJOR}"
 ARCH="${ARCH}"
 EOF
 
+# Generate the installer's /etc/apk/repositories from the same pinned
+# version (was a hardcoded v3.23 file before).
+mkdir -p "$INSTALLER_STAGE/etc/apk"
+cat > "$INSTALLER_STAGE/etc/apk/repositories" <<EOF
+http://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MAJOR}/main
+http://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MAJOR}/community
+EOF
+
 # OpenRC runlevels for the installer (minimal)
 install -d -m 0755 \
     "$INSTALLER_STAGE/etc/runlevels/sysinit" \

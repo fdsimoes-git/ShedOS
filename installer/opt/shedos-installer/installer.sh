@@ -13,6 +13,9 @@
 
 set -e
 
+say() { printf '\n\033[1;34m[shedos-install]\033[0m %s\n' "$*"; }
+die() { printf '\n\033[1;31m[shedos-install:error]\033[0m %s\n' "$*"; exit 1; }
+
 # Bail if another instance is already running (e.g., racey getty respawn).
 LOCKFILE=/run/shedos-installer.lock
 if [ -e "$LOCKFILE" ]; then
@@ -48,15 +51,12 @@ fi
 [ -n "$ALPINE_VERSION" ] && [ -n "$ARCH" ] \
     || die "ALPINE_VERSION/ARCH not set and could not be derived"
 
-say() { printf '\n\033[1;34m[shedos-install]\033[0m %s\n' "$*"; }
-die() { printf '\n\033[1;31m[shedos-install:error]\033[0m %s\n' "$*"; exit 1; }
-
 banner() {
-    cat <<'BANNER'
+    cat <<BANNER
 
 ╔══════════════════════════════════════════════════════════════╗
 ║  ShedOS installer                                            ║
-║  About to install Alpine 3.23 + ShedOS to /dev/sda           ║
+║  About to install Alpine $ALPINE_VERSION + ShedOS to /dev/sda                ║
 ║  Partition scheme:                                           ║
 ║    /dev/sda1   256 MiB   FAT32   /boot/efi                   ║
 ║    /dev/sda2    4 GiB    ext4    /                           ║
@@ -70,6 +70,9 @@ BANNER
 
 already_installed() {
     # Best-effort: probe /dev/sda2 for ext4 with alpine-release inside.
+    # ext4 may not be auto-loaded on alpine-virt; modprobe before we mount
+    # or the check returns a false negative and we'd wipe a valid install.
+    modprobe ext4 2>/dev/null || true
     blkid "$ROOT" 2>/dev/null | grep -q 'TYPE="ext4"' || return 1
     mount -t ext4 "$ROOT" "$MNT" 2>/dev/null || return 1
     if [ -f "$MNT$ALPINE_VERSION_FILE" ] && [ -d "$MNT/opt/shedos" ]; then
