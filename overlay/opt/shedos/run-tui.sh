@@ -39,4 +39,5 @@ for i in $(seq 1 60); do
     sleep 1
 done
 
-exec /usr/bin/python3 -m tui
+cd /opt/shedos
+exec /usr/bin/python3 /opt/shedos/tui/__main__.py
