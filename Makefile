@@ -53,7 +53,9 @@ ssh:
 wipe-system:
 	@echo "Stopping VM..."
 	@vmrun stop $(VMX) hard 2>/dev/null || true
-	rm -f $(SYSTEM_VMDK) vmware/shedos-system-*.vmdk vmware/shedos-system.vmdk.lck
+	rm -f $(SYSTEM_VMDK) vmware/shedos-system-*.vmdk
+	# VMware .lck artifacts are directories, not files — needs -rf.
+	rm -rf vmware/shedos-system.vmdk.lck vmware/*.lck
 	@echo "System disk wiped. Next 'make run' rebuilds the ISO (which recreates"
 	@echo "the empty VMDK), VM boots into the installer, which reinstalls Alpine."
 

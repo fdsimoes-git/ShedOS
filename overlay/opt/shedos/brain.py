@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import collections
 import json
 import os
 import sys
@@ -41,29 +42,34 @@ def _ensure_history_dir():
 def load_history():
     """Return up to MAX_HISTORY_MESSAGES of recent persisted messages.
 
+    Streams the JSONL file into a deque(maxlen=cap) so memory + startup
+    cost stays O(cap), not O(file_size) — the on-disk log is unbounded.
+
     On any I/O error, returns []. Conversation history may contain
     sensitive content, so the directory + files are 0700/0600.
     """
     path = _history_path()
+    cap = config.MAX_HISTORY_MESSAGES
     try:
-        msgs = []
+        buf = collections.deque(maxlen=cap)
+        total = 0
         with open(path) as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    msgs.append(json.loads(line))
+                    buf.append(json.loads(line))
+                    total += 1
                 except json.JSONDecodeError:
                     continue
-        if len(msgs) > config.MAX_HISTORY_MESSAGES:
+        if total > cap:
             sys.stdout.write(
-                f"[brain] history has {len(msgs)} messages; replaying only the "
-                f"last {config.MAX_HISTORY_MESSAGES} (cap via SHEDOS_MAX_HISTORY)\n"
+                f"[brain] history has {total} messages; replaying only the "
+                f"last {cap} (cap via SHEDOS_MAX_HISTORY)\n"
             )
             sys.stdout.flush()
-            msgs = msgs[-config.MAX_HISTORY_MESSAGES:]
-        return msgs
+        return list(buf)
     except FileNotFoundError:
         return []
     except OSError as e:
@@ -76,14 +82,14 @@ def append_history(msg):
     try:
         _ensure_history_dir()
         path = _history_path()
-        existed = os.path.exists(path)
         with open(path, "a") as f:
             f.write(json.dumps(msg) + "\n")
-        if not existed:
-            try:
-                os.chmod(path, config.HISTORY_FILE_MODE)
-            except OSError:
-                pass
+        # Best-effort: enforce 0600 on every append, in case a previous
+        # build (or manual creation) left the file world-readable.
+        try:
+            os.chmod(path, config.HISTORY_FILE_MODE)
+        except OSError:
+            pass
     except OSError:
         pass
 

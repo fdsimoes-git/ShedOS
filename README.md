@@ -53,7 +53,7 @@ mandatory `"You are Claude Code..."` system prompt prefix.
 
 - macOS on Apple Silicon (Alpine arm64 + Fusion arm64 VM)
 - VMware Fusion 13+
-- `xorriso`, `coreutils` — `brew install xorriso coreutils`
+- `xorriso`, `coreutils`, `python3` — `brew install xorriso coreutils python@3`
 - An SSH keypair at `~/.ssh/id_ed25519` (or `id_rsa`, or `id_ecdsa`)
 - A Claude Code OAuth token. Get one with `claude setup-token` on any host
   with Claude Code installed. Token starts with `sk-ant-oat01-`.
@@ -82,7 +82,7 @@ make console                  # connects to the brain via /tmp/shedos.serial
 ```
 > what's my IP?
 [tool: bash(command="ip -4 addr show eth0")]
-192.168.41.x
+<vm-ip>    # Fusion NAT subnet varies by host config; check yours with `make ip`
 
 > install nginx and serve a one-page site that says "hello from shedos"
 [tool: apk(args="add nginx")]
