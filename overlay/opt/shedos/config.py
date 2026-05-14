@@ -17,13 +17,21 @@ HISTORY_FILE_MODE = 0o600
 def _parse_max_history():
     raw = os.environ.get("SHEDOS_MAX_HISTORY", "200")
     try:
-        return int(raw)
+        n = int(raw)
     except (TypeError, ValueError):
         import sys
         sys.stderr.write(
             f"[shedos] SHEDOS_MAX_HISTORY={raw!r} is not an int — defaulting to 200\n"
         )
         return 200
+    if n < 0:
+        import sys
+        sys.stderr.write(
+            f"[shedos] SHEDOS_MAX_HISTORY={raw!r} is negative — defaulting to 200 "
+            "(deque(maxlen=...) rejects negatives)\n"
+        )
+        return 200
+    return n
 
 MAX_HISTORY_MESSAGES = _parse_max_history()
 

@@ -118,8 +118,8 @@ EOF
 # version (was a hardcoded v3.23 file before).
 mkdir -p "$INSTALLER_STAGE/etc/apk"
 cat > "$INSTALLER_STAGE/etc/apk/repositories" <<EOF
-http://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MAJOR}/main
-http://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MAJOR}/community
+https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MAJOR}/main
+https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MAJOR}/community
 EOF
 
 # OpenRC runlevels for the installer (minimal)

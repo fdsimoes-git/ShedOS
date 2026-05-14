@@ -38,7 +38,7 @@ MNT=/mnt
 OVERLAY_TARBALL=/opt/shedos-installer/overlay.tar.gz
 PACKAGES_FILE=/opt/shedos-installer/packages.list
 ALPINE_VERSION_FILE=/etc/alpine-release
-ALPINE_REPO_BASE="http://dl-cdn.alpinelinux.org/alpine"
+ALPINE_REPO_BASE="https://dl-cdn.alpinelinux.org/alpine"
 
 # build.sh writes /opt/shedos-installer/version.env at ISO build time so
 # the installer uses the same Alpine release + arch as the rest of the
