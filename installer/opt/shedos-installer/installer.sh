@@ -237,7 +237,7 @@ say() { printf '\n\033[1;34m[shedos-install:chroot]\033[0m %s\n' "$*"; }
 say "enabling OpenRC services"
 for svc in devfs dmesg mdev hwdrivers; do rc-update add $svc sysinit; done
 for svc in hwclock modules sysctl hostname bootmisc syslog networking; do rc-update add $svc boot; done
-for svc in local sshd; do rc-update add $svc default; done
+for svc in local sshd shedos-brain; do rc-update add $svc default; done
 for svc in mount-ro killprocs savecache; do rc-update add $svc shutdown; done
 
 say "generating SSH host keys"

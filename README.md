@@ -53,7 +53,8 @@ mandatory `"You are Claude Code..."` system prompt prefix.
 
 - macOS on Apple Silicon (Alpine arm64 + Fusion arm64 VM)
 - VMware Fusion 13+
-- `xorriso`, `coreutils`, `python3` — `brew install xorriso coreutils python@3`
+- `xorriso`, `coreutils`, `python3`, `socat` — `brew install xorriso coreutils python@3 socat`
+  (socat is required for `make tui` — puts the host terminal in raw mode so keys + colors work)
 - An SSH keypair at `~/.ssh/id_ed25519` (or `id_rsa`, or `id_ecdsa`)
 - A Claude Code OAuth token. Get one with `claude setup-token` on any host
   with Claude Code installed. Token starts with `sk-ant-oat01-`.
@@ -76,8 +77,18 @@ CDN). After it reboots into the installed system, boots are ~5-10 seconds.
 ## Talking to it
 
 ```bash
-make console                  # connects to the brain via /tmp/shedos.serial
+make tui                      # full TUI (themes, tabs, markdown, animated tools)
+make console                  # legacy plain-text fallback (nc -U)
 ```
+
+The TUI features:
+
+- 6 builtin themes (`/theme nord|dracula|tokyo-night|gruvbox|solarized-dark|monokai`)
+- Markdown rendering for Claude's responses (code blocks get syntax highlighting)
+- Multiple conversation tabs (`Ctrl-T` new, `Ctrl-W` close, `Ctrl-N`/`Ctrl-P` cycle, or `/new`/`/close`/`/next`/`/prev`)
+- Arrow-key history per tab (persisted under `/var/lib/shedos/`)
+- Live spinner + colored result panel for each tool call
+- Slash commands: `/help`, `/tabs`, `/title`, `/theme`, `/clear`, `/quit`
 
 ```
 > what's my IP?

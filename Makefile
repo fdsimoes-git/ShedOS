@@ -1,4 +1,4 @@
-.PHONY: iso run vm console clean distclean help wipe-system
+.PHONY: iso run vm tui console clean distclean help wipe-system
 
 ISO := out/shedos-installer.iso
 VMX := vmware/shedos.vmx
@@ -11,7 +11,8 @@ help:
 	@echo "                    (set CLAUDE_CODE_OAUTH_TOKEN before to bake it in)"
 	@echo "  make vm           render vmware/shedos.vmx from template"
 	@echo "  make run          build + open in VMware Fusion (auto-installs on first boot)"
-	@echo "  make console      connect to the brain via the serial socket (nc -U)"
+	@echo "  make tui          full TUI client (themes, tabs, markdown) via socat raw mode"
+	@echo "  make console      legacy plain-text fallback via nc -U"
 	@echo "  make ssh          ssh root@<vm-ip> using the key baked into the ISO"
 	@echo "  make ip           print the VM's NAT IP"
 	@echo "  make wipe-system  delete the 16GB system disk (next boot reinstalls)"
@@ -31,14 +32,25 @@ $(VMX): vmware/shedos.vmx.tmpl $(ISO)
 run: $(ISO) $(VMX)
 	./vmware/launch.sh
 
+tui:
+	@if [ ! -S $(SOCKET) ]; then \
+		echo "$(SOCKET) doesn't exist yet — start the VM with 'make run' first."; \
+		exit 1; \
+	fi
+	@command -v socat >/dev/null 2>&1 || { \
+		echo "socat not installed — run: brew install socat"; \
+		echo "(socat puts your terminal into raw mode so the TUI's keys + colors work)"; \
+		exit 1; \
+	}
+	@echo "Connecting to ShedOS TUI. Press Ctrl-]  Ctrl-C to quit."
+	@socat -,rawer,escape=0x1d UNIX-CONNECT:$(SOCKET)
+
 console:
 	@if [ ! -S $(SOCKET) ]; then \
 		echo "$(SOCKET) doesn't exist yet — start the VM with 'make run' first."; \
-		echo "(Fusion creates the socket on VM power-on. The socket lives in"; \
-		echo " /tmp because /Volumes/Untitled doesn't support Unix sockets.)"; \
 		exit 1; \
 	fi
-	@echo "Connecting to ShedOS brain via serial. Ctrl-C to quit."
+	@echo "Connecting (legacy plain text). Ctrl-C to quit."
 	@nc -U $(SOCKET)
 
 ip:

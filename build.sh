@@ -89,6 +89,7 @@ find "$OVERLAY_STAGE" -type f \
     \( -name '*.sh' -o -name '*.start' -o -name 'shedos-brain' \) \
     -exec chmod 0755 {} \;
 chmod 0755 "$OVERLAY_STAGE/opt/shedos/brain.py" 2>/dev/null || true
+chmod 0755 "$OVERLAY_STAGE/opt/shedos/bootstrap_token.py" 2>/dev/null || true
 
 # Pack the target overlay into a tarball for the installer to extract
 TARGET_TARBALL="$WORK/overlay.tar.gz"
