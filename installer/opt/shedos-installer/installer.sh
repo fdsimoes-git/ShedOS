@@ -83,13 +83,16 @@ already_installed() {
     return 1
 }
 
-ensure_tools() {
+load_modules() {
     say "loading kernel modules"
     modprobe ext4 2>/dev/null || true
     modprobe vfat 2>/dev/null || true
     modprobe nls_iso8859-1 2>/dev/null || true
     modprobe nls_cp437 2>/dev/null || true
+}
 
+install_tools() {
+    # Must be called AFTER wait_for_network — apk needs DNS + outbound HTTPS.
     say "installing installer-side tools (parted, e2fsprogs, dosfstools, apk-tools)"
     apk update >/dev/null 2>&1 || true
     apk add --no-progress parted e2fsprogs dosfstools apk-tools >/dev/null
@@ -307,8 +310,9 @@ unmount_target() {
 
 do_install() {
     banner
-    ensure_tools
-    wait_for_network
+    load_modules        # no network needed
+    wait_for_network    # die early with clear msg if DHCP/DNS broken
+    install_tools       # apk add — needs network
     partition_disk
     format_disk
     mount_target
