@@ -41,7 +41,10 @@ require() {
 }
 require xorriso xorriso
 require curl curl
-require shasum coreutils
+# shasum ships with macOS by default (via /usr/bin/perl). It's not in
+# coreutils — that brew formula provides gsha256sum, not shasum. Just
+# require the binary by name; on macOS it's already there.
+require shasum perl
 require python3 python
 
 mkdir -p "$WORK" "$OUT" "$ISO_ORIG_DIR"
