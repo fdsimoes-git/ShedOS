@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import collections
 import json
 import os
 import sys
@@ -19,6 +20,80 @@ def get_token():
     return ui.bootstrap_token()
 
 
+def _tty_name():
+    try:
+        return os.path.basename(os.ttyname(0))
+    except OSError:
+        return "default"
+
+
+def _history_path():
+    return os.path.join(config.HISTORY_DIR, f"brain-{_tty_name()}.jsonl")
+
+
+def _ensure_history_dir():
+    try:
+        os.makedirs(config.HISTORY_DIR, mode=config.HISTORY_DIR_MODE, exist_ok=True)
+        os.chmod(config.HISTORY_DIR, config.HISTORY_DIR_MODE)
+    except OSError:
+        pass
+
+
+def load_history():
+    """Return up to MAX_HISTORY_MESSAGES of recent persisted messages.
+
+    Streams the JSONL file into a deque(maxlen=cap) so memory + startup
+    cost stays O(cap), not O(file_size) — the on-disk log is unbounded.
+
+    On any I/O error, returns []. Conversation history may contain
+    sensitive content, so the directory + files are 0700/0600.
+    """
+    path = _history_path()
+    cap = config.MAX_HISTORY_MESSAGES
+    try:
+        buf = collections.deque(maxlen=cap)
+        total = 0
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    buf.append(json.loads(line))
+                    total += 1
+                except json.JSONDecodeError:
+                    continue
+        if total > cap:
+            sys.stdout.write(
+                f"[brain] history has {total} messages; replaying only the "
+                f"last {cap} (cap via SHEDOS_MAX_HISTORY)\n"
+            )
+            sys.stdout.flush()
+        return list(buf)
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        sys.stdout.write(f"[brain] history load failed ({e}); starting fresh\n")
+        sys.stdout.flush()
+        return []
+
+
+def append_history(msg):
+    try:
+        _ensure_history_dir()
+        path = _history_path()
+        with open(path, "a") as f:
+            f.write(json.dumps(msg) + "\n")
+        # Best-effort: enforce 0600 on every append, in case a previous
+        # build (or manual creation) left the file world-readable.
+        try:
+            os.chmod(path, config.HISTORY_FILE_MODE)
+        except OSError:
+            pass
+    except OSError:
+        pass
+
+
 def turn(client, persona, messages):
     for _ in range(config.MAX_ITERATIONS):
         try:
@@ -29,7 +104,9 @@ def turn(client, persona, messages):
             return
 
         content = resp.get("content", [])
-        messages.append({"role": "assistant", "content": content})
+        assistant_msg = {"role": "assistant", "content": content}
+        messages.append(assistant_msg)
+        append_history(assistant_msg)
         ui.render(content)
 
         stop = resp.get("stop_reason")
@@ -52,7 +129,9 @@ def turn(client, persona, messages):
             )
         if not results:
             return
-        messages.append({"role": "user", "content": results})
+        tool_msg = {"role": "user", "content": results}
+        messages.append(tool_msg)
+        append_history(tool_msg)
 
     sys.stdout.write("\n[brain] hit max iterations\n")
     sys.stdout.flush()
@@ -64,7 +143,14 @@ def main():
     client = Client(token)
     ui.banner()
 
-    messages = []
+    messages = load_history()
+    if messages:
+        sys.stdout.write(
+            f"[brain] resumed with {len(messages)} prior messages "
+            f"from {_history_path()}\n"
+        )
+        sys.stdout.flush()
+
     while True:
         try:
             user = ui.prompt("> ")
@@ -74,7 +160,9 @@ def main():
             continue
         if not user:
             continue
-        messages.append({"role": "user", "content": user})
+        user_msg = {"role": "user", "content": user}
+        messages.append(user_msg)
+        append_history(user_msg)
         turn(client, persona, messages)
 
 

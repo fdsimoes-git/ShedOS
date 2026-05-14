@@ -10,12 +10,19 @@ memsize = "2048"
 numvcpus = "2"
 cpuid.coresPerSocket = "2"
 
-# Boot from the ISO (no hard disk — diskless mode, root is tmpfs)
+# Storage:
+#   sata0:0 = installer ISO (also serves as recovery media; UEFI ignores it
+#             once the disk has a valid bootloader)
+#   sata0:1 = 16 GB system disk Alpine + ShedOS gets installed onto
 sata0.present = "TRUE"
 sata0:0.present = "TRUE"
-sata0:0.fileName = "../out/shedos.iso"
+sata0:0.fileName = "../out/shedos-installer.iso"
 sata0:0.deviceType = "cdrom-image"
 sata0:0.startConnected = "TRUE"
+sata0:1.present = "TRUE"
+sata0:1.fileName = "shedos-system.vmdk"
+sata0:1.deviceType = "disk"
+sata0:1.startConnected = "TRUE"
 
 # USB host controllers. Without these, Fusion presents no USB bus to the
 # guest, so no virtual keyboard / mouse hardware appears. xHCI is the

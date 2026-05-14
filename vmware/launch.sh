@@ -10,9 +10,9 @@ if [[ ! -f "$VMX" ]]; then
     exit 1
 fi
 
-ISO="$HERE/../out/shedos.iso"
+ISO="$HERE/../out/shedos-installer.iso"
 if [[ ! -f "$ISO" ]]; then
-    echo "[launch] out/shedos.iso missing — run 'make iso' first" >&2
+    echo "[launch] out/shedos-installer.iso missing — run 'make iso' first" >&2
     exit 1
 fi
 
