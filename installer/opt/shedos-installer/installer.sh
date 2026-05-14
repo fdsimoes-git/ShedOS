@@ -18,10 +18,9 @@ LOCKFILE=/run/shedos-installer.lock
 if [ -e "$LOCKFILE" ]; then
     OWNER_PID=$(cat "$LOCKFILE" 2>/dev/null)
     if [ -n "$OWNER_PID" ] && kill -0 "$OWNER_PID" 2>/dev/null; then
-        printf '\n[shedos-install] another installer (pid %s) is already running. Sleeping.\n' "$OWNER_PID"
+        printf '\n[shedos-install] another installer (pid %s) is already running. Sleeping forever.\n' "$OWNER_PID"
         # Sleep forever so getty doesn't respawn into a tight loop
-        sleep 86400
-        exit 0
+        while :; do sleep 3600; done
     fi
 fi
 echo $$ > "$LOCKFILE"
@@ -37,8 +36,17 @@ OVERLAY_TARBALL=/opt/shedos-installer/overlay.tar.gz
 PACKAGES_FILE=/opt/shedos-installer/packages.list
 ALPINE_VERSION_FILE=/etc/alpine-release
 ALPINE_REPO_BASE="http://dl-cdn.alpinelinux.org/alpine"
-ALPINE_VERSION="3.23"
-ARCH="aarch64"
+
+# build.sh writes /opt/shedos-installer/version.env at ISO build time so
+# the installer uses the same Alpine release + arch as the rest of the
+# pipeline (driven by config/alpine-release and config/arch).
+if [ -r /opt/shedos-installer/version.env ]; then
+    . /opt/shedos-installer/version.env
+fi
+: "${ALPINE_VERSION:=$(cut -d. -f1,2 < /etc/alpine-release 2>/dev/null)}"
+: "${ARCH:=$(apk --print-arch 2>/dev/null)}"
+[ -n "$ALPINE_VERSION" ] && [ -n "$ARCH" ] \
+    || die "ALPINE_VERSION/ARCH not set and could not be derived"
 
 say() { printf '\n\033[1;34m[shedos-install]\033[0m %s\n' "$*"; }
 die() { printf '\n\033[1;31m[shedos-install:error]\033[0m %s\n' "$*"; exit 1; }
@@ -249,11 +257,24 @@ GRUB_DISABLE_OS_PROBER=true
 GRUB
 
 say "grub-install --target=arm64-efi --efi-directory=/boot/efi --removable --no-nvram"
-grub-install --target=arm64-efi --efi-directory=/boot/efi \
-             --removable --no-nvram --verbose 2>&1 | tail -20
+# Capture to a file so a non-zero exit from grub-install isn't masked by
+# the success of `tail` (set -e + pipelines). Then tail the captured log
+# only after the command's exit status has been preserved.
+grub_log=$(mktemp)
+if ! grub-install --target=arm64-efi --efi-directory=/boot/efi \
+                  --removable --no-nvram --verbose >"$grub_log" 2>&1; then
+    say "grub-install FAILED. Last 40 lines:"
+    tail -40 "$grub_log"
+    rm -f "$grub_log"
+    exit 1
+fi
+tail -20 "$grub_log"
+rm -f "$grub_log"
 
 say "verifying BOOTAA64.EFI is in place"
-ls -la /boot/efi/EFI/BOOT/ 2>&1 || say "  /boot/efi/EFI/BOOT missing!"
+[ -f /boot/efi/EFI/BOOT/BOOTAA64.EFI ] \
+    || { say "  /boot/efi/EFI/BOOT/BOOTAA64.EFI missing — install will not boot from disk!"; exit 1; }
+ls -la /boot/efi/EFI/BOOT/
 
 say "grub-mkconfig"
 grub-mkconfig -o /boot/grub/grub.cfg

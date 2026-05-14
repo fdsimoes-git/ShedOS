@@ -30,7 +30,20 @@ def _history_path():
     return os.path.join(config.HISTORY_DIR, f"brain-{_tty_name()}.jsonl")
 
 
+def _ensure_history_dir():
+    try:
+        os.makedirs(config.HISTORY_DIR, mode=config.HISTORY_DIR_MODE, exist_ok=True)
+        os.chmod(config.HISTORY_DIR, config.HISTORY_DIR_MODE)
+    except OSError:
+        pass
+
+
 def load_history():
+    """Return up to MAX_HISTORY_MESSAGES of recent persisted messages.
+
+    On any I/O error, returns []. Conversation history may contain
+    sensitive content, so the directory + files are 0700/0600.
+    """
     path = _history_path()
     try:
         msgs = []
@@ -43,16 +56,34 @@ def load_history():
                     msgs.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
+        if len(msgs) > config.MAX_HISTORY_MESSAGES:
+            sys.stdout.write(
+                f"[brain] history has {len(msgs)} messages; replaying only the "
+                f"last {config.MAX_HISTORY_MESSAGES} (cap via SHEDOS_MAX_HISTORY)\n"
+            )
+            sys.stdout.flush()
+            msgs = msgs[-config.MAX_HISTORY_MESSAGES:]
         return msgs
     except FileNotFoundError:
+        return []
+    except OSError as e:
+        sys.stdout.write(f"[brain] history load failed ({e}); starting fresh\n")
+        sys.stdout.flush()
         return []
 
 
 def append_history(msg):
     try:
-        os.makedirs(config.HISTORY_DIR, exist_ok=True)
-        with open(_history_path(), "a") as f:
+        _ensure_history_dir()
+        path = _history_path()
+        existed = os.path.exists(path)
+        with open(path, "a") as f:
             f.write(json.dumps(msg) + "\n")
+        if not existed:
+            try:
+                os.chmod(path, config.HISTORY_FILE_MODE)
+            except OSError:
+                pass
     except OSError:
         pass
 

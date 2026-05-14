@@ -1,7 +1,8 @@
 # /etc/inittab — ShedOS INSTALLER (on the live ISO)
 #
-# Runs installer.sh on tty1 and ttyS0 so the user sees progress on either
-# the Fusion window or the host's `make console` socket.
+# installer.sh runs only on ttyS0 (Mac-side via `make console`). Two
+# parallel installers would race on /dev/sda. tty1 (Fusion window) shows
+# a static banner pointing the user at `make console`.
 
 ::sysinit:/sbin/openrc sysinit
 ::sysinit:/sbin/openrc boot

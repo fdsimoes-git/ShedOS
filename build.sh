@@ -107,6 +107,13 @@ mkdir -p "$INSTALLER_STAGE/opt/shedos-installer"
 cp "$TARGET_TARBALL" "$INSTALLER_STAGE/opt/shedos-installer/overlay.tar.gz"
 cp config/target-packages.list "$INSTALLER_STAGE/opt/shedos-installer/packages.list"
 
+# Pin Alpine version + arch to whatever config/ says, so installer.sh
+# uses the same values the build pipeline did (instead of hardcoded ones).
+cat > "$INSTALLER_STAGE/opt/shedos-installer/version.env" <<EOF
+ALPINE_VERSION="${ALPINE_MAJOR}"
+ARCH="${ARCH}"
+EOF
+
 # OpenRC runlevels for the installer (minimal)
 install -d -m 0755 \
     "$INSTALLER_STAGE/etc/runlevels/sysinit" \

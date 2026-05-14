@@ -9,6 +9,12 @@ ANTHROPIC_VERSION = "2023-06-01"
 TOKEN_PATH = "/etc/shedos/token"
 PERSONA_PATH = "/etc/shedos/persona.txt"
 HISTORY_DIR = "/var/lib/shedos"
+HISTORY_DIR_MODE = 0o700
+HISTORY_FILE_MODE = 0o600
+# Cap on how many prior messages from the persisted history we replay
+# into a fresh brain process. Without a cap the request grows unbounded
+# and eventually exceeds the model context. Override via $SHEDOS_MAX_HISTORY.
+MAX_HISTORY_MESSAGES = int(os.environ.get("SHEDOS_MAX_HISTORY", "200"))
 
 MAX_ITERATIONS = 30
 MAX_TOKENS = 8192
