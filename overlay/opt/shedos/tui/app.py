@@ -348,59 +348,71 @@ class ShedOSTui:
 
     def send_message(self, text):
         self.render_user(text)
-        # Spinner panel that updates as events stream in
         t = self.theme
-        spinner = Spinner("dots", text=Text("thinking...", style=t["tool_running"]))
         start = time.monotonic()
-        active_tools = {}  # id -> Spinner
 
-        with Live(
-            Panel(
-                spinner,
-                title=Text("Claude", style=f"bold {t['assistant']}"),
-                border_style=t["muted"],
-            ),
-            console=self.console,
-            transient=True,
-            refresh_per_second=10,
-        ) as live:
-            try:
-                for ev in self.rpc.send(self.current_id, text):
-                    et = ev.get("event")
-                    if et == "assistant_text":
-                        live.stop()
-                        self.render_assistant_text(ev.get("chunk", ""))
-                        live.start()
-                    elif et == "tool_use":
-                        live.stop()
-                        name = ev.get("name", "?")
-                        summary = ev.get("input_summary", "")
-                        active_tools[ev.get("id")] = name
-                        self.console.print(
-                            Text(f"  ⟳ {name}({summary})",
-                                 style=t["tool_running"])
-                        )
-                        live.start()
-                    elif et == "tool_result":
-                        live.stop()
-                        out = ev.get("output", {})
-                        ok = isinstance(out, dict) and "error" not in out
-                        self.render_tool_done(ev.get("name", "?"), out, ok)
-                        live.start()
-                    elif et == "end_turn":
-                        break
-                    elif et == "error":
-                        live.stop()
-                        self.render_error(ev.get("msg", "unknown error"))
-                        return
-                    elif et == "user_msg":
-                        pass  # already rendered
-            except RpcError as e:
-                live.stop()
-                self.render_error(str(e))
-                return
+        # No Rich Live wrapper — it competes with sibling prints when you
+        # start/stop it repeatedly. Just emit a "thinking..." line that
+        # gets visually replaced by the first real event, and print each
+        # event as it arrives.
+        self.console.print(
+            Text("  ⠋ thinking...", style=t["tool_running"]),
+            end="\r",
+        )
+
+        try:
+            for ev in self.rpc.send(self.current_id, text):
+                # First real event: clear the "thinking" line by printing
+                # spaces over it, then carriage return.
+                self.console.print(" " * 40, end="\r")
+                self._render_event(ev)
+                if ev.get("event") in ("end_turn", "error"):
+                    break
+        except RpcError as e:
+            self.render_error(str(e))
+            return
 
         self.last_latency_ms = int((time.monotonic() - start) * 1000)
+
+    def _render_event(self, ev):
+        t = self.theme
+        et = ev.get("event")
+        if et == "assistant_text":
+            self.render_assistant_text(ev.get("chunk", ""))
+        elif et == "tool_use":
+            name = ev.get("name", "?")
+            summary = ev.get("input_summary", "")
+            self.console.print(
+                Text(f"  ⟳ {name}({summary})", style=t["tool_running"])
+            )
+        elif et == "tool_result":
+            out = ev.get("output", {})
+            ok = isinstance(out, dict) and "error" not in out
+            self.render_tool_done(ev.get("name", "?"), out, ok)
+        elif et == "error":
+            self.render_error(ev.get("msg", "unknown error"))
+        elif et in ("user_msg", "end_turn"):
+            pass
+
+    def _render_event(self, ev):
+        t = self.theme
+        et = ev.get("event")
+        if et == "assistant_text":
+            self.render_assistant_text(ev.get("chunk", ""))
+        elif et == "tool_use":
+            name = ev.get("name", "?")
+            summary = ev.get("input_summary", "")
+            self.console.print(
+                Text(f"  ⟳ {name}({summary})", style=t["tool_running"])
+            )
+        elif et == "tool_result":
+            out = ev.get("output", {})
+            ok = isinstance(out, dict) and "error" not in out
+            self.render_tool_done(ev.get("name", "?"), out, ok)
+        elif et == "error":
+            self.render_error(ev.get("msg", "unknown error"))
+        elif et in ("user_msg", "end_turn"):
+            pass
 
     # --- Main loop ------------------------------------------------------------
 
