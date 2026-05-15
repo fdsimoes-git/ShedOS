@@ -285,7 +285,13 @@ ls -la /boot/efi/EFI/BOOT/
 say "grub-mkconfig"
 grub-mkconfig -o /boot/grub/grub.cfg
 
-say "locking root password (key-only ssh)"
+say "tightening /root perms (StrictModes precaution)"
+chmod 700 /root
+chmod 700 /root/.ssh 2>/dev/null || true
+chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
+chown -R root:root /root
+
+say "locking root password (key-only ssh; UsePAM=no in sshd_config bypasses lock check)"
 passwd -l root || true
 
 say "cleaning apk cache"
