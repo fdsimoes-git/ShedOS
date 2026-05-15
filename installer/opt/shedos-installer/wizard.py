@@ -66,6 +66,22 @@ def exec_installer():
 def looks_like_token(s):
     return bool(re.match(r"^sk-ant-oat\d+-", s.strip()))
 
+
+def token_display(token_override, token_present):
+    """Render a non-sensitive description of the token state for the UI.
+
+    Deliberately never includes any substring of the actual token —
+    CodeQL flags partial-token displays as 'clear-text logging of
+    sensitive information', and even a truncated prefix/suffix is more
+    information than the user needs at confirm time (they know if they
+    pasted a token or not).
+    """
+    if token_override:
+        return "(set by wizard — will be written to /etc/shedos/token)"
+    if token_present:
+        return "(keep ISO-baked token)"
+    return "(none — write /etc/shedos/token via SSH after install)"
+
 # --- Textual app -------------------------------------------------------------
 
 try:
@@ -346,13 +362,7 @@ def _make_app():
             self.query_one("#persona-desc", Static).update(desc)
 
         def _refresh_summary(self):
-            if STATE.token_override:
-                tok = STATE.token_override
-                tok_disp = f"{tok[:14]}…{tok[-4:]}  (override)"
-            elif STATE.token_present:
-                tok_disp = "(keep ISO default)"
-            else:
-                tok_disp = "(none — write via SSH after install)"
+            tok_disp = token_display(STATE.token_override, STATE.token_present)
             persona_label = next(
                 (l for k, l, _ in PERSONA_PRESETS if k == STATE.persona),
                 STATE.persona,
@@ -559,10 +569,7 @@ def run_rich_wizard():
         "emojis": ask_yn("Allow emojis?", default_yes=False),
     }
 
-    if token_override is None:
-        tok_disp = "(keep ISO default)" if token_present else "(none)"
-    else:
-        tok_disp = token_override[:14] + "…" + token_override[-4:] + "  (override)"
+    tok_disp = token_display(token_override, token_present)
     rows = [
         f"  Token         {tok_disp}",
         f"  Persona       {persona}",
