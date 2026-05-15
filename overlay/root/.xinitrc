@@ -23,19 +23,21 @@ for i in $(seq 1 60); do
     sleep 1
 done
 
-# Chromium in kiosk + app mode = single fullscreen window with no
-# browser chrome. Disable GPU because Fusion arm64 framebuffer doesn't
-# pass GPU acceleration through reliably; software (swiftshader) is
-# slower but stable. Disable sandbox because we're root.
-exec chromium \
-    --no-sandbox \
-    --disable-gpu \
-    --disable-dev-shm-usage \
-    --kiosk \
-    --app=http://127.0.0.1:8080 \
-    --start-fullscreen \
-    --window-position=0,0 \
-    --user-data-dir=/var/lib/shedos/chromium-profile \
-    --disable-features=TranslateUI,InfiniteSessionRestore \
-    --disable-pinch \
-    --overscroll-history-navigation=0
+# Loop Chromium so closing the window (Cmd-W / Ctrl-W) just respawns
+# inside the same X session — user never sees the terminal flash from
+# xinit -> getty -> startx.
+while true; do
+    chromium \
+        --no-sandbox \
+        --disable-gpu \
+        --disable-dev-shm-usage \
+        --kiosk \
+        --app=http://127.0.0.1:8080 \
+        --start-fullscreen \
+        --window-position=0,0 \
+        --user-data-dir=/var/lib/shedos/chromium-profile \
+        --disable-features=TranslateUI,InfiniteSessionRestore \
+        --disable-pinch \
+        --overscroll-history-navigation=0
+    sleep 1
+done
