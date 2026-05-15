@@ -291,8 +291,13 @@ chmod 700 /root/.ssh 2>/dev/null || true
 chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
 chown -R root:root /root
 
-say "locking root password (key-only ssh; UsePAM=no in sshd_config bypasses lock check)"
-passwd -l root || true
+# Don't `passwd -l root` — sshd's internal lock check rejects locked
+# accounts EVEN with UsePAM=no, so locking it breaks key-based SSH.
+# PasswordAuthentication=no + PermitRootLogin=prohibit-password in
+# sshd_config already enforce key-only login. Leaving the password
+# field empty (root::...) is the right state.
+say "ensuring root password is unlocked (key-only ssh enforced via sshd_config)"
+passwd -u root 2>/dev/null || true
 
 say "cleaning apk cache"
 apk cache clean >/dev/null 2>&1 || true
