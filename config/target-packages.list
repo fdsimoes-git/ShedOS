@@ -55,7 +55,13 @@ chromium
 chromium-swiftshader
 font-jetbrains-mono
 font-noto
-ttf-dejavu
+font-dejavu
+
+# VMware Fusion guest tools (clipboard, time sync, graceful shutdown).
+# On arm64 Fusion the vmci channel is sometimes flaky, but it works
+# well enough for clipboard pastes into terminals and is harmless if
+# the host doesn't support it.
+open-vm-tools
 
 # Convenience
 htop

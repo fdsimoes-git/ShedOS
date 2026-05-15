@@ -82,22 +82,25 @@ ssh root@<vm-ip> 'rc-service shedos-web restart'
 
 ## Installer wizard (v0.5.0+)
 
-On first boot the live ISO runs the wizard on **ttyS0** (the Mac connects via `make console`). `tty1` shows a static banner so two installers don't race on `/dev/sda`.
+On first boot the live ISO runs the wizard on **tty1** (the visible Fusion window) — that's what a fresh user sees. `ttyS0` stays as a plain `getty` so it's available as a debug shell via `make console` from the Mac (handy for tailing the install log if something goes wrong).
 
 ```
-run-installer.sh ──exec──→ /usr/bin/python3 /opt/shedos-installer/wizard.py
+run-installer.sh ──→ apk add python3 py3-rich py3-pip open-vm-tools
+                  ──→ rc-service vmtoolsd start   # so Fusion clipboard works
+                  ──→ pip install textual         # not packaged for Alpine 3.23
+                  ──exec──→ /usr/bin/python3 /opt/shedos-installer/wizard.py
                                        │
-                                       ├─ welcome / confirm
-                                       ├─ token override (mascarado, optional)
-                                       ├─ persona preset selection
-                                       ├─ conversation style toggles
+                                       ├─ Textual full-screen UI (rich-fallback if pip failed)
+                                       ├─ welcome → token (masked) → persona → style → confirm
                                        └─ writes /tmp/shedos-wizard.env
                                                   │
                                                   └─exec──→ installer.sh
                                                               (sources the env in apply_overlay)
 ```
 
-`installer.sh` keeps doing the actual disk install (parted → mkfs → `apk --root` → chroot → grub-install → reboot). The wizard is a thin frontend; if it crashes or is skipped, `installer.sh` falls back to baked-in defaults (default persona, terse style, ISO-baked token).
+`installer.sh` keeps doing the actual disk install (parted → mkfs → `apk --root` → chroot → grub-install → reboot) and holds `/run/shedos-installer.lock` for the duration so concurrent spawns can't race on `/dev/sda`. The wizard is a thin frontend; if it crashes or is skipped, `installer.sh` falls back to baked-in defaults (default persona, terse style, ISO-baked token if any).
+
+`open-vm-tools` is installed on both the live ISO and the target system so Fusion's host→guest clipboard channel works (paste your OAuth token into the wizard instead of typing 100+ chars). `vmtoolsd` is registered to start at boot via OpenRC's `default` runlevel.
 
 ## VMware Fusion arm64 quirks (all encoded in `vmware/shedos.vmx.tmpl`)
 
@@ -136,13 +139,12 @@ shedos/
 │   │   └── run-tui.sh               Textual launcher with pip-install fallback
 │   └── root/.xinitrc                openbox + chromium respawn loop
 ├── installer/            apkovl baked into the live installer ISO
-│   ├── etc/inittab                  ttyS0 → wizard.py, tty1 → tty1-banner.sh
+│   ├── etc/inittab                  tty1 → wizard.py, ttyS0 → debug getty
 │   ├── etc/apk/world                python3 + py3-rich + parted + apk-tools
 │   └── opt/shedos-installer/
 │       ├── wizard.py                interactive preferences UI (rich + getpass)
 │       ├── installer.sh             actual disk install (parted/mkfs/apk/chroot/grub)
-│       ├── run-installer.sh         exec wizard.py
-│       └── tty1-banner.sh           "go to ttyS0 to follow along" banner
+│       └── run-installer.sh         exec wizard.py
 ├── vmware/               .vmx template + launch.sh + (gitignored) Fusion runtime files
 └── out/                  (gitignored) shedos-installer.iso
 ```
