@@ -404,3 +404,70 @@ html, body {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* --- Render tabs (image / pdf / web) --------------------------------- */
+
+#main.render-mode .composer { display: none; }
+#main.render-mode { grid-template-rows: 1fr; }
+
+.render-viewport {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+  background: var(--bg-elev-1);
+}
+
+.render-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--bg-elev-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.render-controls .render-title {
+  flex: 1;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.render-controls .btn-icon {
+  background: var(--bg-elev-1);
+  text-decoration: none;
+}
+.render-controls .btn-icon:hover { background: var(--bg-elev-3); }
+
+.render-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: white;
+}
+
+.render-image-stage {
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    repeating-conic-gradient(var(--bg-elev-1) 0% 25%, var(--bg-elev-2) 0% 50%)
+    50% / 24px 24px;
+}
+.render-image-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  transition: transform 120ms ease-out;
+  box-shadow: var(--shadow-lg);
+}
+
+/* Tab type accent on the icon */
+.tab-image .icon { color: var(--accent-3); }
+.tab-pdf .icon   { color: var(--tool-accent-err); }
+.tab-web .icon   { color: var(--accent-2); }
+.tab-chat .icon  { color: var(--text-muted); }
+.tab.active.tab-image { box-shadow: inset 0 0 0 1px var(--accent-3); }
+.tab.active.tab-pdf   { box-shadow: inset 0 0 0 1px var(--tool-accent-err); }
+.tab.active.tab-web   { box-shadow: inset 0 0 0 1px var(--accent-2); }

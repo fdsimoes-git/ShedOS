@@ -1,13 +1,18 @@
 import base64
+import hashlib
 import os
+import shutil
 import stat
 import subprocess
+import time
+import urllib.parse
 
 import httpx
 
 MAX_STREAM = 16 * 1024
 MAX_FILE_READ = 64 * 1024
 MAX_FETCH_BODY = 256 * 1024
+RENDER_DIR = "/var/lib/shedos/render"
 
 
 def _truncate(s, limit=MAX_STREAM):
@@ -190,6 +195,95 @@ def tool_net_fetch(url):
     }
 
 
+# --- Render tools (open assets in new tabs in the GUI) ---------------------
+
+def _is_url(s):
+    return isinstance(s, str) and (s.startswith("http://") or s.startswith("https://"))
+
+
+def _new_asset_id(seed=""):
+    h = hashlib.sha1(f"{seed}{time.time()}".encode("utf-8")).hexdigest()
+    return h[:12]
+
+
+def _stage_local(source, default_name, ext_hint=""):
+    """Copy a local file under /var/lib/shedos/render/<id>/<name>.
+    Returns (asset_id, web_url, title)."""
+    if not os.path.isfile(source):
+        raise ValueError(f"file not found: {source}")
+    asset_id = _new_asset_id(source)
+    dest_dir = os.path.join(RENDER_DIR, asset_id)
+    os.makedirs(dest_dir, exist_ok=True)
+    name = os.path.basename(source) or default_name
+    if ext_hint and not name.lower().endswith(ext_hint):
+        name += ext_hint
+    dest = os.path.join(dest_dir, name)
+    shutil.copy2(source, dest)
+    return asset_id, f"/render/{asset_id}/{name}", name
+
+
+def _download_to_render(url, default_name, ext_hint=""):
+    """HTTP-fetch and stage. Returns (asset_id, web_url, title)."""
+    try:
+        r = httpx.get(url, timeout=30, follow_redirects=True,
+                      headers={"User-Agent": "Mozilla/5.0 ShedOS"})
+        r.raise_for_status()
+    except Exception as e:
+        raise ValueError(f"download failed: {e}")
+    name = os.path.basename(urllib.parse.urlparse(url).path) or default_name
+    if ext_hint and not name.lower().endswith(ext_hint):
+        name += ext_hint
+    asset_id = _new_asset_id(url)
+    dest_dir = os.path.join(RENDER_DIR, asset_id)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, name)
+    with open(dest, "wb") as f:
+        f.write(r.content)
+    return asset_id, f"/render/{asset_id}/{name}", name
+
+
+def _render_response(rtype, asset_id, url, title):
+    """Result envelope the GUI looks for to open a new tab."""
+    return {
+        "ok": True,
+        "render": {"type": rtype, "id": asset_id, "url": url, "title": title},
+    }
+
+
+def tool_render_image(source):
+    try:
+        if _is_url(source):
+            aid, url, title = _download_to_render(source, "image", ".img")
+            return _render_response("image", aid, url, title)
+        aid, url, title = _stage_local(source, "image", "")
+        return _render_response("image", aid, url, title)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+def tool_render_pdf(source):
+    try:
+        if _is_url(source):
+            aid, url, title = _download_to_render(source, "doc.pdf", ".pdf")
+            return _render_response("pdf", aid, url, title)
+        aid, url, title = _stage_local(source, "doc.pdf", ".pdf")
+        return _render_response("pdf", aid, url, title)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+def tool_render_web(url):
+    if not _is_url(url):
+        return {"error": "render_web needs an http(s):// URL"}
+    aid = _new_asset_id(url)
+    title = urllib.parse.urlparse(url).netloc or url
+    # No download — iframe loads the URL directly. Note: some sites
+    # send X-Frame-Options that block embedding; if so the iframe will
+    # render blank and the user should use net_fetch + render_markdown
+    # instead.
+    return _render_response("web", aid, url, title)
+
+
 SCHEMAS = [
     {
         "name": "bash",
@@ -285,6 +379,48 @@ SCHEMAS = [
             "required": ["url"],
         },
     },
+    {
+        "name": "render_image",
+        "description": (
+            "Open an image in a new tab in the GUI. `source` is either an "
+            "http(s) URL or a local file path on the guest. Returns a "
+            "render envelope the GUI uses to add a new tab. Use this when "
+            "the user wants to SEE an image — e.g. you used net_fetch to "
+            "grab a JPG/PNG, or you wrote one with write_file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"source": {"type": "string"}},
+            "required": ["source"],
+        },
+    },
+    {
+        "name": "render_pdf",
+        "description": (
+            "Open a PDF in a new tab. `source` is a URL (downloaded first "
+            "to bypass anti-embedding headers) or a local guest path. "
+            "Chromium's built-in PDF viewer renders it inline."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"source": {"type": "string"}},
+            "required": ["source"],
+        },
+    },
+    {
+        "name": "render_web",
+        "description": (
+            "Open a web page in a new tab via iframe. `url` must be http(s). "
+            "Use for sites the user wants to BROWSE. Some sites set "
+            "X-Frame-Options that block embedding — if the iframe shows "
+            "blank, fall back to net_fetch + render_markdown."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
+        },
+    },
 ]
 
 
@@ -297,6 +433,9 @@ HANDLERS = {
     "process_list": tool_process_list,
     "process_kill": tool_process_kill,
     "net_fetch": tool_net_fetch,
+    "render_image": tool_render_image,
+    "render_pdf": tool_render_pdf,
+    "render_web": tool_render_web,
 }
 
 

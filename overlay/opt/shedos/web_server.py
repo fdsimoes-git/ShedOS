@@ -26,6 +26,7 @@ from aiohttp import WSMsgType, web
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+RENDER_DIR = "/var/lib/shedos/render"
 BRAIN_SOCK = "/run/shedos-brain.sock"
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 8080
@@ -203,6 +204,11 @@ def make_app():
     app.router.add_get("/ws", handle_ws)
     if os.path.isdir(WEB_DIR):
         app.router.add_static("/static", WEB_DIR)
+    # Render assets (images, PDFs, etc.) live under /var/lib/shedos/render
+    # and are served at /render/<asset_id>/<filename>. Brain's render_*
+    # tools stage files there.
+    os.makedirs(RENDER_DIR, exist_ok=True)
+    app.router.add_static("/render", RENDER_DIR, show_index=False)
     return app
 
 
