@@ -75,13 +75,18 @@
       const items = block.trim().split(/\n/).map(l => `<li>${l.replace(/^\d+\. /, "")}</li>`).join("");
       return `${lead}<ol>${items}</ol>`;
     });
+    // Restore code-block placeholders BEFORE paragraph-wrapping. The
+    // placeholder is ` CODE0 ` (space-padded), so a code block on its own
+    // would otherwise be trimmed to `CODE0` and wrapped in `<p>CODE0</p>`,
+    // losing the saved <pre><code>. Doing the restore first means the
+    // wrapper sees an actual <pre> token and skips wrapping it.
+    html = html.replace(/ CODE(\d+) /g, (_, i) => codeBlocks[parseInt(i, 10)]);
     html = html.split(/\n{2,}/).map(chunk => {
       const t = chunk.trim();
       if (!t) return "";
       if (/^<(h\d|ul|ol|pre|blockquote|p)/.test(t)) return t;
       return `<p>${t.replace(/\n/g, "<br>")}</p>`;
     }).join("\n");
-    html = html.replace(/ CODE(\d+) /g, (_, i) => codeBlocks[parseInt(i, 10)]);
     return html;
   }
 
@@ -470,6 +475,14 @@
     ws.addEventListener("open", () => setStatus("online", "connected"));
     ws.addEventListener("close", () => {
       setStatus("error", "disconnected — retrying");
+      // If a prompt was in flight when the socket closed, _stream_done
+      // will never arrive over the dead connection — re-enable the
+      // composer so a transient web/brain restart doesn't strand the GUI.
+      if (inFlightSessionId) {
+        inFlightSessionId = null;
+        els.input.disabled = false;
+        els.sendBtn.disabled = false;
+      }
       setTimeout(connectWS, 2000);
     });
     ws.addEventListener("error", () => setStatus("error", "ws error"));

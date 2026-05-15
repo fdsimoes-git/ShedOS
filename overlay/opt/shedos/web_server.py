@@ -73,43 +73,74 @@ class BrainClient:
         self.writer.write(line)
         await self.writer.drain()
 
+    async def _drop_connection(self):
+        if self.writer is not None:
+            try:
+                self.writer.close()
+                await self.writer.wait_closed()
+            except Exception:
+                pass
+        self.reader = None
+        self.writer = None
+
+    async def _ensure_connected(self):
+        # If a previous request hit EOF (brain restart, supervised respawn)
+        # the reader returns empty forever. Drop and reconnect so the next
+        # request goes through instead of failing for the lifetime of
+        # shedos-web.
+        if self.reader is None or self.writer is None or self.reader.at_eof():
+            await self._drop_connection()
+            await self.connect()
+
     async def call(self, method, **params):
         async with self._lock:
+            await self._ensure_connected()
             req_id = self._next_id()
-            await self._send({"req_id": req_id, "method": method,
-                              "params": params})
-            while True:
-                line = await self.reader.readline()
-                if not line:
-                    raise RuntimeError("brain disconnected")
-                msg = json.loads(line.decode("utf-8"))
-                if msg.get("req_id") != req_id:
-                    continue
-                if msg.get("ok"):
-                    return msg.get("result")
-                if msg.get("ok") is False:
-                    raise RuntimeError(msg.get("error", "rpc error"))
-                if msg.get("event") == "done":
-                    return None
+            try:
+                await self._send({"req_id": req_id, "method": method,
+                                  "params": params})
+                while True:
+                    line = await self.reader.readline()
+                    if not line:
+                        await self._drop_connection()
+                        raise RuntimeError("brain disconnected")
+                    msg = json.loads(line.decode("utf-8"))
+                    if msg.get("req_id") != req_id:
+                        continue
+                    if msg.get("ok"):
+                        return msg.get("result")
+                    if msg.get("ok") is False:
+                        raise RuntimeError(msg.get("error", "rpc error"))
+                    if msg.get("event") == "done":
+                        return None
+            except (BrokenPipeError, ConnectionResetError) as e:
+                await self._drop_connection()
+                raise RuntimeError(f"brain disconnected: {e}")
 
     async def stream_send(self, sid, text):
         """Yield events from sessions.send until done."""
         async with self._lock:
+            await self._ensure_connected()
             req_id = self._next_id()
-            await self._send({"req_id": req_id, "method": "sessions.send",
-                              "params": {"id": sid, "text": text}})
-            while True:
-                line = await self.reader.readline()
-                if not line:
-                    raise RuntimeError("brain disconnected")
-                msg = json.loads(line.decode("utf-8"))
-                if msg.get("req_id") != req_id:
-                    continue
-                if msg.get("ok") is False:
-                    raise RuntimeError(msg.get("error", "send failed"))
-                if msg.get("event") == "done":
-                    return
-                yield msg
+            try:
+                await self._send({"req_id": req_id, "method": "sessions.send",
+                                  "params": {"id": sid, "text": text}})
+                while True:
+                    line = await self.reader.readline()
+                    if not line:
+                        await self._drop_connection()
+                        raise RuntimeError("brain disconnected")
+                    msg = json.loads(line.decode("utf-8"))
+                    if msg.get("req_id") != req_id:
+                        continue
+                    if msg.get("ok") is False:
+                        raise RuntimeError(msg.get("error", "send failed"))
+                    if msg.get("event") == "done":
+                        return
+                    yield msg
+            except (BrokenPipeError, ConnectionResetError) as e:
+                await self._drop_connection()
+                raise RuntimeError(f"brain disconnected: {e}")
 
 
 # ---- HTTP handlers ---------------------------------------------------------

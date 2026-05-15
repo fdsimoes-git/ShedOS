@@ -12,7 +12,7 @@ help:
 	@echo "  make vm           render vmware/shedos.vmx from template"
 	@echo "  make run          build + open in VMware Fusion (auto-installs on first boot)"
 	@echo "  make tui          full TUI client (themes, tabs, markdown) via socat raw mode"
-	@echo "  make console      legacy plain-text fallback via nc -U"
+	@echo "  make console      raw serial pipe (nc -U) — debug-only; ttyS0 hosts the TUI"
 	@echo "  make ssh          ssh root@<vm-ip> using the key baked into the ISO"
 	@echo "  make ip           print the VM's NAT IP"
 	@echo "  make wipe-system  delete the 16GB system disk (next boot reinstalls)"

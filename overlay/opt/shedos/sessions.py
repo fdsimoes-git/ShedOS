@@ -105,8 +105,12 @@ class Session:
         self.messages.append(msg)
         # Cap the in-memory replay window so turn() doesn't send unbounded
         # history to Anthropic (the on-disk JSONL keeps everything).
-        if len(self.messages) > config.MAX_HISTORY_MESSAGES:
-            self.messages = self.messages[-config.MAX_HISTORY_MESSAGES:]
+        # Truncate in place via slice-assignment so callers holding a
+        # reference (e.g. brain.turn() does `messages = session.messages`)
+        # keep seeing subsequent appends.
+        cap = config.MAX_HISTORY_MESSAGES
+        if len(self.messages) > cap:
+            del self.messages[:-cap]
         self.updated_at = _now()
         try:
             with open(self.path, "a") as f:

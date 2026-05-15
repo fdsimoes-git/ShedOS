@@ -113,7 +113,16 @@ class RpcServer:
                 await self._reply_ok(writer, req_id, s.info())
             elif method == "sessions.delete":
                 sid = params.get("id")
-                ok = self.manager.delete(sid)
+                # Wait for any in-flight send on this session to finish
+                # before unlinking the JSONL — otherwise the producer
+                # would keep appending to a half-deleted session and
+                # recreate an orphan log without metadata.
+                lock = self._send_locks.get(sid)
+                if lock is not None:
+                    async with lock:
+                        ok = self.manager.delete(sid)
+                else:
+                    ok = self.manager.delete(sid)
                 self._send_locks.pop(sid, None)
                 await self._reply_ok(writer, req_id, {"deleted": ok})
             elif method == "sessions.history":
