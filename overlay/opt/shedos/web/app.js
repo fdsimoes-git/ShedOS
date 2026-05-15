@@ -134,48 +134,102 @@
     els.main.classList.remove("render-mode");
   }
 
+  // Validate render asset URLs. tab.url for `web` tabs comes from the
+  // brain (assistant-controlled), so a URL like `https://x/" onload="..."`
+  // could otherwise break out of an interpolated href/src attribute.
+  // Allow only http(s), our own /render/ + /static/ paths, and the about:blank
+  // sentinel. Anything else collapses to about:blank.
+  function safeRenderUrl(raw) {
+    if (typeof raw !== "string") return "about:blank";
+    const u = raw.trim();
+    if (/^(https?:\/\/|\/render\/|\/static\/)/i.test(u)) return u;
+    if (u === "about:blank") return u;
+    return "about:blank";
+  }
+
+  function buildControls(titleText, extras = []) {
+    // Builds the .render-controls bar via DOM APIs so titles/URLs are
+    // never interpolated into innerHTML.
+    const bar = document.createElement("div");
+    bar.className = "render-controls";
+    extras.filter(e => e && e.position === "left").forEach(e => bar.appendChild(e.node));
+    const title = document.createElement("span");
+    title.className = "render-title";
+    title.textContent = titleText;
+    bar.appendChild(title);
+    extras.filter(e => e && e.position !== "left").forEach(e => bar.appendChild(e.node));
+    return bar;
+  }
+
   function showRenderLayout(tab) {
     els.chat.style.display = "none";
     if (renderViewport) renderViewport.remove();
     renderViewport = document.createElement("div");
     renderViewport.className = "render-viewport";
+    const safeUrl = safeRenderUrl(tab.url);
+
     if (tab.type === "image") {
-      renderViewport.innerHTML = `
-        <div class="render-controls">
-          <button class="btn-icon" data-zoom="in"  title="Zoom in">＋</button>
-          <button class="btn-icon" data-zoom="out" title="Zoom out">－</button>
-          <button class="btn-icon" data-zoom="fit" title="Fit">⤢</button>
-          <span class="render-title">${escapeHtml(tab.title)}</span>
-        </div>
-        <div class="render-image-stage">
-          <img src="${tab.url}" alt="${escapeHtml(tab.title)}">
-        </div>
-      `;
+      const mkBtn = (zoom, label, title) => {
+        const b = document.createElement("button");
+        b.className = "btn-icon";
+        b.dataset.zoom = zoom;
+        b.title = title;
+        b.textContent = label;
+        return { node: b, position: "left" };
+      };
+      renderViewport.appendChild(buildControls(tab.title || "image", [
+        mkBtn("in",  "＋", "Zoom in"),
+        mkBtn("out", "－", "Zoom out"),
+        mkBtn("fit", "⤢", "Fit"),
+      ]));
+      const stage = document.createElement("div");
+      stage.className = "render-image-stage";
+      const img = document.createElement("img");
+      img.src = safeUrl;
+      img.alt = tab.title || "";
+      stage.appendChild(img);
+      renderViewport.appendChild(stage);
+
       let zoom = 1;
-      const img = renderViewport.querySelector("img");
       const apply = () => { img.style.transform = `scale(${zoom})`; };
       renderViewport.addEventListener("click", (e) => {
-        const z = e.target.dataset.zoom;
+        const z = e.target.dataset && e.target.dataset.zoom;
         if (z === "in") { zoom = Math.min(zoom * 1.2, 8); apply(); }
         else if (z === "out") { zoom = Math.max(zoom / 1.2, 0.1); apply(); }
         else if (z === "fit") { zoom = 1; apply(); }
       });
+
     } else if (tab.type === "pdf") {
-      renderViewport.innerHTML = `
-        <div class="render-controls">
-          <span class="render-title">📄 ${escapeHtml(tab.title)}</span>
-          <a class="btn-icon" href="${tab.url}" download title="Download">⬇</a>
-        </div>
-        <iframe src="${tab.url}" class="render-frame"></iframe>
-      `;
+      const dl = document.createElement("a");
+      dl.className = "btn-icon";
+      dl.href = safeUrl;
+      dl.download = "";
+      dl.title = "Download";
+      dl.textContent = "⬇";
+      renderViewport.appendChild(buildControls(`📄 ${tab.title || "pdf"}`,
+        [{ node: dl }]));
+      const frame = document.createElement("iframe");
+      frame.className = "render-frame";
+      frame.src = safeUrl;
+      renderViewport.appendChild(frame);
+
     } else if (tab.type === "web") {
-      renderViewport.innerHTML = `
-        <div class="render-controls">
-          <span class="render-title">🌐 ${escapeHtml(tab.title)}</span>
-          <a class="btn-icon" href="${tab.url}" target="_blank" title="Open in new window">⇗</a>
-        </div>
-        <iframe src="${tab.url}" class="render-frame" sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
-      `;
+      const open = document.createElement("a");
+      open.className = "btn-icon";
+      open.href = safeUrl;
+      open.target = "_blank";
+      open.rel = "noopener noreferrer";
+      open.title = "Open in new window";
+      open.textContent = "⇗";
+      renderViewport.appendChild(buildControls(`🌐 ${tab.title || "web"}`,
+        [{ node: open }]));
+      const frame = document.createElement("iframe");
+      frame.className = "render-frame";
+      frame.src = safeUrl;
+      // Sandbox restricts the framed page even after URL validation.
+      frame.setAttribute("sandbox",
+        "allow-scripts allow-same-origin allow-popups allow-forms");
+      renderViewport.appendChild(frame);
     }
     els.main.appendChild(renderViewport);
     els.main.classList.add("render-mode");

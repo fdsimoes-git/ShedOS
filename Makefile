@@ -50,7 +50,8 @@ console:
 		echo "$(SOCKET) doesn't exist yet — start the VM with 'make run' first."; \
 		exit 1; \
 	fi
-	@echo "Connecting (legacy plain text). Ctrl-C to quit."
+	@echo "Raw serial console (ttyS0 runs the Textual TUI — for the proper"
+	@echo "client use 'make tui' which sets up a PTY via socat). Ctrl-C to quit."
 	@nc -U $(SOCKET)
 
 ip:

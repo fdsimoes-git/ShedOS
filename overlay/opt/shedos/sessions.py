@@ -124,7 +124,39 @@ class Session:
 
     def set_title(self, title):
         self.title = title
-        self._write_meta()
+        self._rewrite_meta_only()
+
+    def _rewrite_meta_only(self):
+        # _write_meta rebuilds the JSONL from self.messages, which is now
+        # capped at MAX_HISTORY_MESSAGES by append(). Calling that path on
+        # a long-running session would silently truncate older on-disk
+        # messages. This method streams the existing file and only swaps
+        # the leading meta line, preserving every appended message.
+        if not os.path.exists(self.path):
+            self._write_meta()
+            return
+        meta_line = json.dumps({"type": "meta", "data": {
+            "title": self.title,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }}) + "\n"
+        tmp = self.path + ".tmp"
+        with open(self.path, "r") as src, open(tmp, "w") as dst:
+            dst.write(meta_line)
+            first = src.readline()
+            if first.strip():
+                try:
+                    if json.loads(first).get("type") != "meta":
+                        dst.write(first)  # not a meta line — keep it
+                except json.JSONDecodeError:
+                    dst.write(first)
+            for line in src:
+                dst.write(line)
+        os.replace(tmp, self.path)
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
 
     def info(self):
         return {

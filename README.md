@@ -78,7 +78,10 @@ CDN). After it reboots into the installed system, boots are ~5-10 seconds.
 
 ```bash
 make tui                      # full TUI (themes, tabs, markdown, animated tools)
-make console                  # legacy plain-text fallback (nc -U)
+make console                  # raw serial pipe (nc -U) — for debugging only;
+                              # ttyS0 hosts the Textual TUI which needs a PTY,
+                              # so use `make tui` for the real interface
+make ssh                      # ssh into the VM (best for shell access)
 ```
 
 The TUI is built with [Textual](https://textual.textualize.io) (full-screen

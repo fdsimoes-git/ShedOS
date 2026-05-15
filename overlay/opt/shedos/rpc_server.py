@@ -32,6 +32,17 @@ class RpcServer:
         self.handler = brain_handler  # async callable for sessions.send
         self.sock_path = sock_path
         self.manager = SessionManager()
+        # Per-session asyncio.Lock so concurrent sessions.send calls from
+        # different clients (e.g. GUI + TUI) don't interleave turns on the
+        # same Session.messages list. Created lazily; cleaned up on delete.
+        self._send_locks = {}
+
+    def _send_lock(self, sid):
+        lock = self._send_locks.get(sid)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._send_locks[sid] = lock
+        return lock
 
     async def start(self):
         try:
@@ -101,7 +112,9 @@ class RpcServer:
                 s = self.manager.create(title=params.get("title", "New chat"))
                 await self._reply_ok(writer, req_id, s.info())
             elif method == "sessions.delete":
-                ok = self.manager.delete(params.get("id"))
+                sid = params.get("id")
+                ok = self.manager.delete(sid)
+                self._send_locks.pop(sid, None)
                 await self._reply_ok(writer, req_id, {"deleted": ok})
             elif method == "sessions.history":
                 s = self.manager.get(params.get("id"))
@@ -123,10 +136,15 @@ class RpcServer:
                 if s is None:
                     await self._reply_err(writer, req_id, "no such session")
                     return
-                async for event in self.handler(s, params.get("text", "")):
-                    event["req_id"] = req_id
-                    await self._send_line(writer, event)
-                await self._send_line(writer, {"req_id": req_id, "event": "done"})
+                # Serialize turns on a single session — without this lock,
+                # two concurrent sends would both mutate s.messages and
+                # send overlapping Anthropic requests built on a shifting
+                # message list.
+                async with self._send_lock(s.id):
+                    async for event in self.handler(s, params.get("text", "")):
+                        event["req_id"] = req_id
+                        await self._send_line(writer, event)
+                    await self._send_line(writer, {"req_id": req_id, "event": "done"})
             elif method == "ping":
                 await self._reply_ok(writer, req_id, {"pong": True})
             else:

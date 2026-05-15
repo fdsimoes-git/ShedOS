@@ -185,10 +185,14 @@ async def handle_ws(request):
             try:
                 async for ev in brain.stream_send(sid, text):
                     await ws.send_json(ev)
-                await ws.send_json({"event": "_stream_done"})
             except Exception as e:
                 await ws.send_json({"event": "error",
                                     "msg": f"{type(e).__name__}: {e}"})
+            finally:
+                # Always emit _stream_done so the frontend re-enables the
+                # composer even when the brain raises (deleted session,
+                # daemon restart, etc).
+                await ws.send_json({"event": "_stream_done"})
         else:
             await ws.send_json({"type": "error",
                                 "msg": f"unknown type: {kind}"})
