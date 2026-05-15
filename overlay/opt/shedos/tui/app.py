@@ -351,25 +351,23 @@ class ShedOSTui:
         t = self.theme
         start = time.monotonic()
 
-        # No Rich Live wrapper — it competes with sibling prints when you
-        # start/stop it repeatedly. Just emit a "thinking..." line that
-        # gets visually replaced by the first real event, and print each
-        # event as it arrives.
-        self.console.print(
-            Text("  ⠋ thinking...", style=t["tool_running"]),
-            end="\r",
-        )
+        # Force-flush stdout after every print: prompt_toolkit's prompt()
+        # can leave the terminal in a state where subsequent rich.print
+        # output is queued in an internal buffer until the next user-
+        # triggered redraw (which is why responses only appear on tab
+        # cycle / clear). Explicit flush makes them visible immediately.
+        self.console.print(Text("  ...", style=t["tool_running"]))
+        sys.stdout.flush()
 
         try:
             for ev in self.rpc.send(self.current_id, text):
-                # First real event: clear the "thinking" line by printing
-                # spaces over it, then carriage return.
-                self.console.print(" " * 40, end="\r")
                 self._render_event(ev)
+                sys.stdout.flush()
                 if ev.get("event") in ("end_turn", "error"):
                     break
         except RpcError as e:
             self.render_error(str(e))
+            sys.stdout.flush()
             return
 
         self.last_latency_ms = int((time.monotonic() - start) * 1000)
