@@ -20,5 +20,9 @@ for i in $(seq 1 60); do
     sleep 1
 done
 
+export HOME=/root
+export USER=root
+export XDG_RUNTIME_DIR=/run/user/0
+mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null
 cd /root
 exec /usr/bin/startx /root/.xinitrc -- :0 vt1 -nolisten tcp -keeptty

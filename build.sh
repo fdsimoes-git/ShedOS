@@ -93,12 +93,15 @@ chmod 0755 "$OVERLAY_STAGE/opt/shedos/brain.py" 2>/dev/null || true
 chmod 0755 "$OVERLAY_STAGE/opt/shedos/web_server.py" 2>/dev/null || true
 chmod 0755 "$OVERLAY_STAGE/opt/shedos/bootstrap_token.py" 2>/dev/null || true
 
-# Pack the target overlay into a tarball for the installer to extract
+# Pack the target overlay into a tarball for the installer to extract.
+# Include `root` so files like /root/.xinitrc make it onto the target.
 TARGET_TARBALL="$WORK/overlay.tar.gz"
 log "packing target overlay -> $TARGET_TARBALL"
+TAR_ROOTS="etc opt"
+[ -d "$OVERLAY_STAGE/root" ] && TAR_ROOTS="$TAR_ROOTS root"
 (cd "$OVERLAY_STAGE" && tar -czf "$TARGET_TARBALL" \
     --uid 0 --gid 0 --uname root --gname root \
-    etc opt)
+    $TAR_ROOTS)
 
 # --- 3. Stage the INSTALLER apkovl ------------------------------------------
 log "staging installer apkovl"
