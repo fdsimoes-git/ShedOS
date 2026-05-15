@@ -86,9 +86,11 @@ find "$OVERLAY_STAGE" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null 
 find "$OVERLAY_STAGE" -name '*.pyc' -delete 2>/dev/null || true
 # Make scripts executable
 find "$OVERLAY_STAGE" -type f \
-    \( -name '*.sh' -o -name '*.start' -o -name 'shedos-brain' \) \
+    \( -name '*.sh' -o -name '*.start' -o -name 'shedos-brain' \
+       -o -name 'shedos-web' -o -name '.xinitrc' \) \
     -exec chmod 0755 {} \;
 chmod 0755 "$OVERLAY_STAGE/opt/shedos/brain.py" 2>/dev/null || true
+chmod 0755 "$OVERLAY_STAGE/opt/shedos/web_server.py" 2>/dev/null || true
 chmod 0755 "$OVERLAY_STAGE/opt/shedos/bootstrap_token.py" 2>/dev/null || true
 
 # Pack the target overlay into a tarball for the installer to extract

@@ -30,11 +30,27 @@ curl
 python3
 py3-httpx
 
-# TUI runtime (v0.3.0+)
+# TUI runtime (v0.3.0+, fallback for serial/ssh access)
 py3-prompt_toolkit
 py3-rich
 # pip needed to install textual (not packaged for Alpine 3.23)
 py3-pip
+
+# Web bridge (v0.4.0): aiohttp serves the GUI's HTTP + WebSocket
+py3-aiohttp
+
+# GUI stack (v0.4.0): X11 + WM + Chromium app mode on tty1
+xorg-server
+xinit
+mesa-dri-gallium
+xf86-video-vmware
+xf86-input-libinput
+openbox
+chromium
+chromium-swiftshader
+font-jetbrains-mono
+font-noto
+ttf-dejavu
 
 # Convenience
 htop
