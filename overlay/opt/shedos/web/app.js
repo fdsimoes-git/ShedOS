@@ -22,8 +22,12 @@
   let ws = null;
   let tabs = [];          // unified: [{id, type, title, sessionId?, url?}]
   let currentTabId = null;
-  let activeToolBubbles = {}; // {tool_use_id: bubble element}
+  let activeToolBubbles = {}; // {tool_use_id: {row, sessionId}}
   let renderViewport = null;  // div for non-chat tabs (created on demand)
+  // The session whose response is currently streaming. Used to route
+  // incoming WS events to the originating chat tab even if the user
+  // switches tabs mid-response.
+  let inFlightSessionId = null;
 
   // ---------- Markdown (small subset) -----------------------------------
 
@@ -52,8 +56,17 @@
     html = html.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
     html = html.replace(/(^|\W)\*([^*\n]+)\*/g, "$1<em>$2</em>");
     html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    // Whitelist link schemes — assistant text is rendered with innerHTML,
+    // so a `javascript:` URL in a markdown link would execute in the GUI's
+    // local context (same origin as the API/WS endpoints).
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, raw) => {
+      // text and raw are already HTML-escaped because escapeHtml was applied
+      // on line 48 before this replace runs. Re-escaping here would corrupt
+      // URLs containing `&` (becomes `&amp;amp;`). Just validate the scheme.
+      const safe = /^(https?:\/\/|mailto:|\/render\/|\/static\/|#)/i.test(raw.trim());
+      if (!safe) return m;  // render the markdown source verbatim (already escaped)
+      return `<a href="${raw}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+    });
     html = html.replace(/(^|\n)((?:[*\-] .*(?:\n|$))+)/g, (m, lead, block) => {
       const items = block.trim().split(/\n/).map(l => `<li>${l.replace(/^[*\-] /, "")}</li>`).join("");
       return `${lead}<ul>${items}</ul>`;
@@ -186,10 +199,22 @@
     `;
   }
 
+  function chatRoot(sessionId) {
+    // Returns the chat DOM element to append messages to. Falls back to
+    // the currently-visible chat container if no specific session is given.
+    if (!sessionId) return els.chat;
+    // Hidden chat panels could live elsewhere, but our current layout
+    // only has one chat element. Detached-render is fine because when
+    // the user switches back to the originating chat tab, loadChatHistory
+    // re-fetches from the persistent backend and replays everything.
+    return els.chat;
+  }
+
   function bubble(role, opts = {}) {
     const row = document.createElement("div");
     row.className = `bubble-row ${role}`;
     if (opts.toolId) row.dataset.toolId = opts.toolId;
+    if (opts.sessionId) row.dataset.sessionId = opts.sessionId;
     const avatar = document.createElement("div");
     avatar.className = `avatar ${role === "claude" ? "claude" : role === "tool" ? "tool" : "user"}`;
     avatar.textContent = role === "claude" ? "✦" : role === "tool" ? "⚙" : "Y";
@@ -197,23 +222,32 @@
     body.className = "bubble" + (opts.markdown ? " markdown" : "");
     row.appendChild(avatar);
     row.appendChild(body);
-    els.chat.appendChild(row);
-    els.chat.scrollTop = els.chat.scrollHeight;
+    // Only append to the visible chat if the event belongs to the active
+    // chat tab. Otherwise the message is persisted server-side and will
+    // appear when the user switches to that chat (via history reload).
+    const t = currentTab();
+    const eventBelongsToCurrent =
+      !opts.sessionId ||
+      (t && t.type === "chat" && t.sessionId === opts.sessionId);
+    if (eventBelongsToCurrent) {
+      els.chat.appendChild(row);
+      els.chat.scrollTop = els.chat.scrollHeight;
+    }
     return { row, body };
   }
 
-  function addUser(text) {
-    const { body } = bubble("user");
+  function addUser(text, sessionId) {
+    const { body } = bubble("user", { sessionId });
     body.innerHTML = `<div class="who">You</div>${escapeHtml(text).replace(/\n/g, "<br>")}`;
   }
 
-  function addClaude(text) {
-    const { body } = bubble("claude", { markdown: true });
+  function addClaude(text, sessionId) {
+    const { body } = bubble("claude", { markdown: true, sessionId });
     body.innerHTML = `<div class="who">Claude</div>${renderMarkdown(text)}`;
   }
 
-  function addTool(name, summary, toolId) {
-    const { row, body } = bubble("tool", { toolId });
+  function addTool(name, summary, toolId, sessionId) {
+    const { row, body } = bubble("tool", { toolId, sessionId });
     body.innerHTML = `
       <div class="tool-head">
         <span class="badge">running</span>
@@ -223,12 +257,13 @@
       </div>
       <div class="tool-output">…</div>
     `;
-    activeToolBubbles[toolId] = row;
+    activeToolBubbles[toolId] = { row, sessionId };
   }
 
   function setToolResult(toolId, output, ok) {
-    const row = activeToolBubbles[toolId];
-    if (!row) return;
+    const entry = activeToolBubbles[toolId];
+    if (!entry) return;
+    const row = entry.row;
     row.classList.add(ok ? "ok" : "err");
     const head = row.querySelector(".tool-head");
     if (head) {
@@ -393,11 +428,15 @@
 
   function handleServerMessage(msg) {
     const ev = msg.event;
+    // Events flow over a single WS but belong to the inFlightSessionId
+    // (set when we send). This way tab-switching mid-response doesn't
+    // misroute the response into a different chat tab's DOM.
+    const sid = inFlightSessionId;
     switch (ev) {
       case "user_msg": break;
-      case "assistant_text": addClaude(msg.chunk || ""); break;
+      case "assistant_text": addClaude(msg.chunk || "", sid); break;
       case "tool_use":
-        addTool(msg.name || "?", msg.input_summary || "", msg.id);
+        addTool(msg.name || "?", msg.input_summary || "", msg.id, sid);
         break;
       case "tool_result": {
         const out = msg.output || {};
@@ -408,6 +447,7 @@
       case "error": addError(msg.msg || "unknown error"); break;
       case "end_turn":
       case "_stream_done":
+        inFlightSessionId = null;
         els.input.disabled = false;
         els.sendBtn.disabled = false;
         if (currentTab() && currentTab().type === "chat") els.input.focus();
@@ -424,7 +464,8 @@
     let chatTab = t && t.type === "chat" ? t : tabs.find(x => x.type === "chat");
     if (!chatTab) { addError("no active chat tab"); return; }
     if (chatTab.id !== currentTabId) switchTo(chatTab.id);
-    addUser(text);
+    inFlightSessionId = chatTab.sessionId;
+    addUser(text, chatTab.sessionId);
     els.input.disabled = true;
     els.sendBtn.disabled = true;
     ws.send(JSON.stringify({ type: "send", session_id: chatTab.sessionId, text }));

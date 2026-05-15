@@ -6,6 +6,7 @@ each event as the daemon writes it.
 """
 import json
 import socket
+import threading
 
 SOCK_PATH = "/run/shedos-brain.sock"
 
@@ -20,6 +21,11 @@ class RpcClient:
         self.sock = None
         self._buf = b""
         self._req_id = 0
+        # Serializes access to the socket. The Textual app runs the chat
+        # input on the main thread but the streaming producer reads from
+        # send() on a worker thread, so two concurrent _recv_line/_send
+        # interleavings would corrupt the JSON-line framing.
+        self._lock = threading.RLock()
 
     def connect(self):
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -58,41 +64,49 @@ class RpcClient:
     # --- Non-streaming calls ---------------------------------------------------
 
     def call(self, method, **params):
-        req_id = self._next_id()
-        self._send({"req_id": req_id, "method": method, "params": params})
-        while True:
-            msg = self._recv_line()
-            if msg.get("req_id") != req_id:
-                # event from a different in-flight call — ignore for sync use
-                continue
-            if msg.get("ok") is True:
-                return msg.get("result")
-            if msg.get("ok") is False:
-                raise RpcError(msg.get("error", "unknown error"))
-            # streaming event sneaking onto a non-streaming call — ignore
-            if msg.get("event") == "done":
-                return None
+        with self._lock:
+            req_id = self._next_id()
+            self._send({"req_id": req_id, "method": method, "params": params})
+            while True:
+                msg = self._recv_line()
+                if msg.get("req_id") != req_id:
+                    # event from a different in-flight call — ignore for sync use
+                    continue
+                if msg.get("ok") is True:
+                    return msg.get("result")
+                if msg.get("ok") is False:
+                    raise RpcError(msg.get("error", "unknown error"))
+                # streaming event sneaking onto a non-streaming call — ignore
+                if msg.get("event") == "done":
+                    return None
 
     # --- Streaming sessions.send ----------------------------------------------
 
     def send(self, session_id, text):
-        """Yield events from sessions.send until 'done' arrives."""
-        req_id = self._next_id()
-        self._send({
-            "req_id": req_id,
-            "method": "sessions.send",
-            "params": {"id": session_id, "text": text},
-        })
-        while True:
-            msg = self._recv_line()
-            if msg.get("req_id") != req_id:
-                continue
-            if msg.get("ok") is False:
-                raise RpcError(msg.get("error", "send failed"))
-            ev = msg.get("event")
-            if ev == "done":
-                return
-            yield msg
+        """Yield events from sessions.send until 'done' arrives.
+
+        Holds the lock for the duration of the stream so other call()s on
+        the same client wait until the stream finishes. This is fine for
+        the TUI because the user can't issue a second prompt while the
+        first is still being answered.
+        """
+        with self._lock:
+            req_id = self._next_id()
+            self._send({
+                "req_id": req_id,
+                "method": "sessions.send",
+                "params": {"id": session_id, "text": text},
+            })
+            while True:
+                msg = self._recv_line()
+                if msg.get("req_id") != req_id:
+                    continue
+                if msg.get("ok") is False:
+                    raise RpcError(msg.get("error", "send failed"))
+                ev = msg.get("event")
+                if ev == "done":
+                    return
+                yield msg
 
     # --- Sugar ----------------------------------------------------------------
 

@@ -62,6 +62,13 @@ class Session:
         s = cls(sid, path, title=meta.get("title", "(untitled)"),
                 created_at=meta.get("created_at", _now()))
         s.updated_at = meta.get("updated_at", s.created_at)
+        # If a sidecar timestamp exists, use that — it tracks activity
+        # without rewriting the meta line on every message append.
+        try:
+            with open(s._sidecar()) as f:
+                s.updated_at = int(f.read().strip())
+        except (OSError, ValueError):
+            pass
         s.messages = list(msgs)
         return s
 
@@ -84,8 +91,22 @@ class Session:
         except OSError:
             pass
 
+    def _sidecar(self):
+        return self.path[: -len(".jsonl")] + ".updated"
+
+    def _persist_updated(self):
+        try:
+            with open(self._sidecar(), "w") as f:
+                f.write(str(self.updated_at))
+        except OSError:
+            pass
+
     def append(self, msg):
         self.messages.append(msg)
+        # Cap the in-memory replay window so turn() doesn't send unbounded
+        # history to Anthropic (the on-disk JSONL keeps everything).
+        if len(self.messages) > config.MAX_HISTORY_MESSAGES:
+            self.messages = self.messages[-config.MAX_HISTORY_MESSAGES:]
         self.updated_at = _now()
         try:
             with open(self.path, "a") as f:
@@ -96,6 +117,10 @@ class Session:
                 pass
         except OSError:
             pass
+        # Sidecar file with the timestamp so the session list sorts by
+        # most-recent activity even after a daemon restart (the meta line
+        # at the top of the JSONL is only written at create/title-change).
+        self._persist_updated()
 
     def set_title(self, title):
         self.title = title
@@ -111,10 +136,11 @@ class Session:
         }
 
     def delete(self):
-        try:
-            os.unlink(self.path)
-        except FileNotFoundError:
-            pass
+        for p in (self.path, self._sidecar()):
+            try:
+                os.unlink(p)
+            except FileNotFoundError:
+                pass
 
 
 class SessionManager:

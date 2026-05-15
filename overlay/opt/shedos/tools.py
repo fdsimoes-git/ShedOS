@@ -13,6 +13,18 @@ MAX_STREAM = 16 * 1024
 MAX_FILE_READ = 64 * 1024
 MAX_FETCH_BODY = 256 * 1024
 RENDER_DIR = "/var/lib/shedos/render"
+MAX_RENDER_BYTES = 50 * 1024 * 1024  # 50 MiB cap per render asset
+import re as _re
+
+
+def _safe_filename(name, default="asset"):
+    """Sanitize for both filesystem + URL: strip path separators, control
+    chars, quotes, and URL-special chars. Keeps spaces / dashes / dots."""
+    if not name:
+        return default
+    name = os.path.basename(name)
+    cleaned = _re.sub(r'[^\w.\- ]+', '_', name).strip(' _')
+    return cleaned or default
 
 
 def _truncate(s, limit=MAX_STREAM):
@@ -211,35 +223,56 @@ def _stage_local(source, default_name, ext_hint=""):
     Returns (asset_id, web_url, title)."""
     if not os.path.isfile(source):
         raise ValueError(f"file not found: {source}")
+    size = os.path.getsize(source)
+    if size > MAX_RENDER_BYTES:
+        raise ValueError(f"file too large ({size} > {MAX_RENDER_BYTES} bytes)")
     asset_id = _new_asset_id(source)
     dest_dir = os.path.join(RENDER_DIR, asset_id)
     os.makedirs(dest_dir, exist_ok=True)
-    name = os.path.basename(source) or default_name
-    if ext_hint and not name.lower().endswith(ext_hint):
-        name += ext_hint
+    raw_name = os.path.basename(source) or default_name
+    if ext_hint and not raw_name.lower().endswith(ext_hint):
+        raw_name += ext_hint
+    name = _safe_filename(raw_name, default_name)
     dest = os.path.join(dest_dir, name)
     shutil.copy2(source, dest)
-    return asset_id, f"/render/{asset_id}/{name}", name
+    # URL-encode the path component so weird-but-safe names still work.
+    quoted = urllib.parse.quote(name)
+    return asset_id, f"/render/{asset_id}/{quoted}", name
 
 
 def _download_to_render(url, default_name, ext_hint=""):
-    """HTTP-fetch and stage. Returns (asset_id, web_url, title)."""
-    try:
-        r = httpx.get(url, timeout=30, follow_redirects=True,
-                      headers={"User-Agent": "Mozilla/5.0 ShedOS"})
-        r.raise_for_status()
-    except Exception as e:
-        raise ValueError(f"download failed: {e}")
-    name = os.path.basename(urllib.parse.urlparse(url).path) or default_name
-    if ext_hint and not name.lower().endswith(ext_hint):
-        name += ext_hint
+    """Stream-download an HTTP asset to disk with a size cap. Returns
+    (asset_id, web_url, title)."""
     asset_id = _new_asset_id(url)
     dest_dir = os.path.join(RENDER_DIR, asset_id)
     os.makedirs(dest_dir, exist_ok=True)
+    raw_name = os.path.basename(urllib.parse.urlparse(url).path) or default_name
+    if ext_hint and not raw_name.lower().endswith(ext_hint):
+        raw_name += ext_hint
+    name = _safe_filename(raw_name, default_name)
     dest = os.path.join(dest_dir, name)
-    with open(dest, "wb") as f:
-        f.write(r.content)
-    return asset_id, f"/render/{asset_id}/{name}", name
+    try:
+        with httpx.stream("GET", url, timeout=30, follow_redirects=True,
+                          headers={"User-Agent": "Mozilla/5.0 ShedOS"}) as r:
+            r.raise_for_status()
+            total = 0
+            with open(dest, "wb") as f:
+                for chunk in r.iter_bytes(chunk_size=64 * 1024):
+                    total += len(chunk)
+                    if total > MAX_RENDER_BYTES:
+                        f.close()
+                        try:
+                            os.unlink(dest)
+                        except OSError:
+                            pass
+                        raise ValueError(
+                            f"response exceeded {MAX_RENDER_BYTES} bytes; aborted"
+                        )
+                    f.write(chunk)
+    except httpx.HTTPError as e:
+        raise ValueError(f"download failed: {e}")
+    quoted = urllib.parse.quote(name)
+    return asset_id, f"/render/{asset_id}/{quoted}", name
 
 
 def _render_response(rtype, asset_id, url, title):
