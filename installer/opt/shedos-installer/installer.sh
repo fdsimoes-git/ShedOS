@@ -182,7 +182,7 @@ apply_overlay() {
 
     # Source wizard env (wizard.py writes /tmp/shedos-wizard.env before
     # exec'ing this script). Empty/missing means use the built-in defaults.
-    TOKEN_OVERRIDE=""
+    : "${TOKEN_OVERRIDE:=}"
     PERSONA_NAME="default"
     STYLE_TERSE=1
     STYLE_FORMAL=0
