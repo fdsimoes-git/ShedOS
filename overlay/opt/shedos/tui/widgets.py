@@ -43,7 +43,7 @@ class UserCard(Card):
         margin: 1 2;
         padding: 1 2;
         border: round $success;
-        background: $panel-user;
+        background: $success 15%;
     }
     UserCard .card-header {
         color: $success;
@@ -66,7 +66,7 @@ class ClaudeCard(Card):
         margin: 1 2;
         padding: 1 2;
         border: round $primary;
-        background: $panel-assistant;
+        background: $primary 15%;
     }
     ClaudeCard .card-header {
         color: $primary;
@@ -74,7 +74,7 @@ class ClaudeCard(Card):
         margin-bottom: 1;
     }
     ClaudeCard Markdown {
-        background: $panel-assistant;
+        background: $primary 15%;
         margin: 0;
         padding: 0;
     }
@@ -94,10 +94,10 @@ class ToolCard(Card):
         margin: 1 4;
         padding: 0 2;
         border: round $warning;
-        background: $panel-tool;
+        background: $warning 15%;
     }
-    ToolCard.tool-ok { border: round $success; }
-    ToolCard.tool-err { border: round $error; }
+    ToolCard.tool-ok { border: round $success; background: $success 15%; }
+    ToolCard.tool-err { border: round $error; background: $error 15%; }
     ToolCard .card-header {
         color: $warning;
         text-style: bold;
