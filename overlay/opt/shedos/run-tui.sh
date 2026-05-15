@@ -13,12 +13,17 @@ while [ ! -x /usr/bin/python3 ]; do
     sleep 2
 done
 
-# Ensure prompt_toolkit + rich + httpx are importable. If not, sleep so
-# getty doesn't tight-loop when something's broken.
-if ! /usr/bin/python3 -c 'import httpx, prompt_toolkit, rich' 2>/dev/null; then
-    printf '\n[shedos] missing python deps (httpx / prompt_toolkit / rich). Sleeping 5 min before respawn.\n'
-    sleep 300
-    exit 1
+# Ensure runtime deps are importable. textual is pip-installed during
+# install (not packaged for Alpine 3.23); fall back to a clear sleep
+# loop if anything's missing so getty doesn't tight-loop the terminal.
+if ! /usr/bin/python3 -c 'import httpx, rich, textual' 2>/dev/null; then
+    printf '\n[shedos] missing python deps (httpx / rich / textual). Trying to install textual now...\n'
+    /usr/bin/python3 -m pip install --quiet --no-cache-dir --break-system-packages textual 2>&1 | tail -3
+    if ! /usr/bin/python3 -c 'import textual' 2>/dev/null; then
+        printf '\n[shedos] textual still missing. Sleeping 5 min before respawn.\n'
+        sleep 300
+        exit 1
+    fi
 fi
 
 # First-boot token bootstrap

@@ -81,14 +81,18 @@ make tui                      # full TUI (themes, tabs, markdown, animated tools
 make console                  # legacy plain-text fallback (nc -U)
 ```
 
-The TUI features:
+The TUI is built with [Textual](https://textual.textualize.io) (full-screen
+modern Python TUI framework — installed in the guest via pip during install
+since it's not packaged for Alpine 3.23). Features:
 
-- 6 builtin themes (`/theme nord|dracula|tokyo-night|gruvbox|solarized-dark|monokai`)
-- Markdown rendering for Claude's responses (code blocks get syntax highlighting)
-- Multiple conversation tabs (`Ctrl-T` new, `Ctrl-W` close, `Ctrl-N`/`Ctrl-P` cycle, or `/new`/`/close`/`/next`/`/prev`)
-- Arrow-key history per tab (persisted under `/var/lib/shedos/`)
-- Live spinner + colored result panel for each tool call
-- Slash commands: `/help`, `/tabs`, `/title`, `/theme`, `/clear`, `/quit`
+- 6 builtin themes (Ctrl-K cycles; `/theme nord|dracula|tokyo-night|gruvbox|solarized-dark|monokai`)
+- Cards with rounded borders, padding, and themed backgrounds (you / claude / tool / error all visually distinct)
+- Markdown widget renders Claude's responses with syntax-highlighted code blocks, tables, lists
+- Tabbed conversations (`Ctrl-T` new, `Ctrl-W` close, `Ctrl-N`/`Ctrl-P` cycle)
+- Per-tab scrollable chat history (auto-loaded on startup from `/var/lib/shedos/sessions/`)
+- Tool calls show a yellow card with command + args, then turn green (success) or red (failure) with the output
+- Header + Footer with key-binding hints
+- Slash commands: `/help`, `/new`, `/close`, `/next`, `/prev`, `/theme`, `/title`, `/quit`
 
 ```
 > what's my IP?

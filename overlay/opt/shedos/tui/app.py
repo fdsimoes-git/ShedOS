@@ -1,486 +1,328 @@
-"""The TUI application: chat REPL with rich rendering + prompt_toolkit input.
+"""ShedOS TUI — Textual-based modern interface.
 
-Architecture: rich prints chat history to stdout above the prompt;
-prompt_toolkit owns the bottom input line with arrow-key history,
-custom key bindings, and slash-commands. tabs are virtual — switching
-tabs reprints history of the new session.
-
-Why not a full-screen Textual app? py3-textual isn't packaged for
-Alpine 3.23. prompt_toolkit + rich is on Alpine and gives us the same
-practical features (themes, history, syntax-highlighted markdown,
-animated spinners) over serial without surprises.
+Replaces the prompt_toolkit + rich REPL with a full-screen Textual App.
+Cards (User / Claude / Tool) have backgrounds, rounded borders, padding,
+and proper card visuals. Header + Footer + TabbedContent + Input. Themes
+via Textual's Theme system. RPC backend (rpc_client.py) is unchanged.
 """
+import asyncio
 import os
 import sys
-import time
+import threading
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.formatted_text import HTML
-from prompt_toolkit.history import FileHistory
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.shortcuts import CompleteStyle
-from rich.columns import Columns
-from rich.console import Console, Group
-from rich.live import Live
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.spinner import Spinner
-from rich.syntax import Syntax
-from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Container, VerticalScroll
+from textual.css.query import NoMatches
+from textual.widgets import (
+    Footer, Header, Input, Static, TabbedContent, TabPane,
+)
 
 from tui import themes
 from tui.rpc_client import RpcClient, RpcError
-
-HISTORY_DIR = "/var/lib/shedos"
-
-
-def _hist_path(sid):
-    os.makedirs(HISTORY_DIR, exist_ok=True)
-    return os.path.join(HISTORY_DIR, f"prompt-{sid}.txt")
+from tui.widgets import ClaudeCard, ErrorCard, ToolCard, UserCard
 
 
-class ShedOSTui:
-    def __init__(self):
-        self.console = Console(force_terminal=True, color_system="truecolor")
-        self.theme_name = themes.load_saved_theme()
-        self.theme = themes.get(self.theme_name)
+HISTORY_PATH = "/var/lib/shedos/prompt-history.txt"
+
+
+class ChatPane(VerticalScroll):
+    """A tab-pane chat: scrollable column of cards bound to one session."""
+
+    DEFAULT_CSS = """
+    ChatPane {
+        background: $surface;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, session_id, title, **kw):
+        super().__init__(**kw)
+        self.session_id = session_id
+        self.title = title
+
+    def add_user(self, text):
+        self.mount(UserCard(text))
+        self.scroll_end(animate=False)
+
+    def add_claude(self, text):
+        self.mount(ClaudeCard(text))
+        self.scroll_end(animate=False)
+
+    def add_tool(self, name, summary):
+        c = ToolCard(name, summary)
+        self.mount(c)
+        self.scroll_end(animate=False)
+        return c
+
+    def add_error(self, msg):
+        self.mount(ErrorCard(msg))
+        self.scroll_end(animate=False)
+
+
+class ShedOSApp(App):
+    """Top-level Textual app."""
+
+    CSS = """
+    Screen { background: $surface; }
+    Header { background: $primary 30%; color: $foreground; height: 1; }
+    Footer { background: $panel; color: $foreground; }
+    TabbedContent { background: $surface; }
+    Tabs Tab { padding: 0 2; }
+    Tabs Tab.-active {
+        background: $primary 40%;
+        color: $foreground;
+        text-style: bold;
+    }
+    Input {
+        margin: 0 1 0 1;
+        border: tall $accent;
+        background: $panel;
+        color: $foreground;
+        height: 3;
+    }
+    Input:focus { border: tall $primary; }
+    """
+
+    BINDINGS = [
+        Binding("ctrl+t", "new_tab", "New tab", show=True),
+        Binding("ctrl+w", "close_tab", "Close tab", show=True),
+        Binding("ctrl+n", "next_tab", "Next", show=True),
+        Binding("ctrl+p", "prev_tab", "Prev", show=True),
+        Binding("ctrl+k", "cycle_theme", "Theme", show=True),
+        Binding("ctrl+q", "quit", "Quit", show=True),
+    ]
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
         self.rpc = RpcClient()
-        self.sessions = []
-        self.current_id = None
-        self.current_title = "(none)"
-        self.last_latency_ms = None
+        self._tab_counter = 0
+        self._theme_name = themes.load_saved()
 
-    # --- Startup --------------------------------------------------------------
+    # --- App lifecycle -------------------------------------------------------
 
-    def connect_and_init(self):
-        for attempt in range(20):
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        yield TabbedContent(id="tabs")
+        yield Input(placeholder="ask anything…  (Ctrl-T new tab · Ctrl-K theme · /help)",
+                    id="prompt")
+        yield Footer()
+
+    async def on_mount(self) -> None:
+        self.title = "ShedOS"
+        self.sub_title = "Claude is your shell"
+        # Register all themes and apply the saved one
+        for n in themes.names():
+            self.register_theme(themes.textual_theme(n))
+        self.theme = self._theme_name
+
+        # Connect to brain (in a thread; RpcClient is sync). Retry if not up.
+        await self._connect_with_retry()
+
+        # Open existing sessions or create one
+        sessions = await self._call_rpc("list_sessions")
+        tabs = self.query_one(TabbedContent)
+        if not sessions:
+            info = await self._call_rpc("create_session", title="New chat")
+            await self._add_tab(info["id"], info["title"])
+        else:
+            for s in sessions:
+                await self._add_tab(s["id"], s["title"], history=True)
+            tabs.active = f"tab-{sessions[0]['id']}"
+
+        self.query_one(Input).focus()
+
+    async def _connect_with_retry(self):
+        for _ in range(30):
             try:
-                self.rpc.connect()
-                self.rpc.ping()
-                break
+                await asyncio.to_thread(self.rpc.connect)
+                await self._call_rpc("ping")
+                return
             except (FileNotFoundError, ConnectionRefusedError):
-                if attempt == 0:
-                    self.console.print(
-                        "[yellow]Waiting for shedos-brain daemon...[/yellow]"
-                    )
-                time.sleep(1)
-        else:
-            self.console.print(
-                "[red]Could not reach shedos-brain daemon at /run/shedos-brain.sock[/red]"
-            )
-            sys.exit(1)
+                await asyncio.sleep(1)
+        # Surface as a status message
+        self.bell()
 
-        self.refresh_sessions()
-        if not self.sessions:
-            s = self.rpc.create_session(title="New chat")
-            self.refresh_sessions()
-            self.switch_to(s["id"])
-        else:
-            # Open the most-recent
-            self.switch_to(self.sessions[0]["id"])
+    async def _call_rpc(self, method_name, **kw):
+        """Call a sync RpcClient method in a thread."""
+        method = getattr(self.rpc, method_name)
+        return await asyncio.to_thread(method, **kw) if kw else \
+            await asyncio.to_thread(method)
 
-    def refresh_sessions(self):
+    # --- Tabs ----------------------------------------------------------------
+
+    async def _add_tab(self, session_id, title, history=False):
+        tabs = self.query_one(TabbedContent)
+        pane_id = f"tab-{session_id}"
+        pane = ChatPane(session_id, title, id=pane_id)
+        await tabs.add_pane(TabPane(title, pane, id=pane_id))
+        if history:
+            await self._populate_history(pane)
+        return pane
+
+    async def _populate_history(self, pane):
         try:
-            self.sessions = self.rpc.list_sessions()
-        except RpcError as e:
-            self.console.print(f"[red]rpc error: {e}[/red]")
+            data = await self._call_rpc("history", sid=pane.session_id)
+        except RpcError:
+            return
+        for m in data.get("messages", []):
+            role = m.get("role")
+            content = m.get("content")
+            if role == "user" and isinstance(content, str):
+                pane.add_user(content)
+            elif role == "assistant" and isinstance(content, list):
+                for block in content:
+                    t = block.get("type")
+                    if t == "text":
+                        pane.add_claude(block.get("text", ""))
+                    elif t == "tool_use":
+                        c = pane.add_tool(
+                            block.get("name", "?"),
+                            str(block.get("input", ""))[:60],
+                        )
+                        c.set_result({"info": "(history)"}, True)
 
-    # --- Rendering ------------------------------------------------------------
-
-    def banner(self):
-        t = self.theme
-        title = Text("ShedOS 0.3", style=f"bold {t['primary']}")
-        sub = Text("  Claude is your shell. Try /help for commands.",
-                   style=t["muted"])
-        self.console.rule(title, style=t["accent"])
-        self.console.print(sub, justify="center")
-
-    def status_line(self):
-        t = self.theme
-        tabs = []
-        for s in self.sessions:
-            marker = "●" if s["id"] == self.current_id else " "
-            color = t["primary"] if s["id"] == self.current_id else t["muted"]
-            label = f"{marker} {s['title'][:18]}"
-            tabs.append(f"[{color}]{label}[/{color}]")
-        if tabs:
-            self.console.print(
-                Text("┊ ").join(self.console.render_str(x) for x in tabs)
-            )
-
-    def make_prompt(self):
-        t = self.theme
-        return HTML(
-            f'<style fg="{t["accent"]}" bold="true">▸</style> '
-        )
-
-    def render_user(self, text):
-        t = self.theme
-        self.console.print(
-            Panel(
-                Text(text, style=t["foreground"]),
-                title=Text("You", style=f"bold {t['user']}"),
-                title_align="left",
-                border_style=t["user"],
-                padding=(0, 1),
-            )
-        )
-
-    def render_assistant_text(self, text):
-        # Markdown rendering with code highlighting
+    def _current_pane(self):
+        tabs = self.query_one(TabbedContent)
+        active = tabs.active
+        if not active:
+            return None
         try:
-            md = Markdown(text, code_theme="monokai")
-        except Exception:
-            md = Text(text)
-        t = self.theme
-        self.console.print(
-            Panel(
-                md,
-                title=Text("Claude", style=f"bold {t['assistant']}"),
-                title_align="left",
-                border_style=t["assistant"],
-                padding=(0, 1),
-            )
-        )
+            pane = self.query_one(f"#{active}", ChatPane)
+            return pane
+        except NoMatches:
+            return None
 
-    def render_tool_done(self, name, output, ok):
-        t = self.theme
-        color = t["tool_ok"] if ok else t["tool_err"]
-        # Compact view: show the most useful field if present
-        body = ""
-        if isinstance(output, dict):
-            if "stdout" in output:
-                body = output["stdout"]
-                if output.get("stderr"):
-                    body += f"\n[stderr]\n{output['stderr']}"
-            elif "error" in output:
-                body = f"error: {output['error']}"
-            elif "content" in output:
-                body = str(output["content"])[:1000]
-            else:
-                body = str(output)[:1000]
-        else:
-            body = str(output)[:1000]
-        body = body.rstrip()
-        if not body:
-            body = "(no output)"
-        # Truncate if huge
-        if len(body) > 1500:
-            body = body[:1500] + "\n... (truncated)"
-        self.console.print(
-            Panel(
-                Text(body, style=t["foreground"]),
-                title=Text(f"⚙  {name}", style=f"bold {color}"),
-                title_align="left",
-                border_style=color,
-                padding=(0, 1),
-            )
-        )
+    async def action_new_tab(self):
+        info = await self._call_rpc("create_session", title="New chat")
+        await self._add_tab(info["id"], info["title"])
+        self.query_one(TabbedContent).active = f"tab-{info['id']}"
+        self.query_one(Input).focus()
 
-    def render_error(self, msg):
-        t = self.theme
-        self.console.print(
-            Panel(
-                Text(msg, style=t["tool_err"]),
-                title=Text("error", style=f"bold {t['tool_err']}"),
-                border_style=t["tool_err"],
-                padding=(0, 1),
-            )
-        )
-
-    # --- Tabs / sessions -----------------------------------------------------
-
-    def switch_to(self, sid):
-        self.current_id = sid
-        for s in self.sessions:
-            if s["id"] == sid:
-                self.current_title = s["title"]
-                break
-        try:
-            hist = self.rpc.history(sid)
-        except RpcError as e:
-            self.render_error(f"loading history: {e}")
+    async def action_close_tab(self):
+        pane = self._current_pane()
+        if pane is None:
             return
-        info = hist.get("info", {})
-        msgs = hist.get("messages", [])
-        self.console.clear()
-        self.banner()
-        self.status_line()
-        if msgs:
-            self.console.print(
-                Text(f"  Resumed: {info.get('title','(untitled)')} "
-                     f"({len(msgs)} messages)", style=self.theme["muted"])
-            )
-            for m in msgs:
-                role = m.get("role")
-                content = m.get("content")
-                if role == "user":
-                    if isinstance(content, str):
-                        self.render_user(content)
-                    elif isinstance(content, list):
-                        # tool_result message — skip, we don't replay
-                        pass
-                elif role == "assistant":
-                    if isinstance(content, list):
-                        for block in content:
-                            t = block.get("type")
-                            if t == "text":
-                                self.render_assistant_text(block.get("text", ""))
-                            elif t == "tool_use":
-                                self.console.print(
-                                    Text(
-                                        f"  [tool: {block.get('name')} "
-                                        f"({str(block.get('input',''))[:60]})]",
-                                        style=self.theme["muted"],
-                                    )
-                                )
-        else:
-            self.console.print(
-                Text("  Empty session. Type to start a conversation.",
-                     style=self.theme["muted"])
-            )
+        tabs = self.query_one(TabbedContent)
+        if tabs.tab_count <= 1:
+            return  # don't close the last tab
+        sid = pane.session_id
+        await self._call_rpc("delete_session", sid=sid)
+        await tabs.remove_pane(f"tab-{sid}")
 
-    def new_tab(self):
-        s = self.rpc.create_session(title="New chat")
-        self.refresh_sessions()
-        self.switch_to(s["id"])
+    def action_next_tab(self):
+        self.query_one(TabbedContent).action_next_tab()
 
-    def close_tab(self):
-        if self.current_id is None:
+    def action_prev_tab(self):
+        self.query_one(TabbedContent).action_previous_tab()
+
+    def action_cycle_theme(self):
+        names = themes.names()
+        i = names.index(self.theme) if self.theme in names else 0
+        nxt = names[(i + 1) % len(names)]
+        self.theme = nxt
+        self._theme_name = nxt
+        themes.save(nxt)
+        self.notify(f"Theme: {nxt}", severity="information", timeout=2)
+
+    # --- Input handling ------------------------------------------------------
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        text = event.value.strip()
+        event.input.value = ""
+        if not text:
             return
-        if len(self.sessions) <= 1:
-            self.console.print(
-                Text("Cannot close the last tab.", style=self.theme["muted"])
-            )
+        if text.startswith("/"):
+            await self._handle_slash(text)
             return
-        old = self.current_id
-        self.rpc.delete_session(old)
-        self.refresh_sessions()
-        self.switch_to(self.sessions[0]["id"])
+        await self._send_to_brain(text)
 
-    def cycle_tab(self, direction=1):
-        if not self.sessions:
-            return
-        ids = [s["id"] for s in self.sessions]
-        try:
-            i = ids.index(self.current_id)
-        except ValueError:
-            i = 0
-        i = (i + direction) % len(ids)
-        self.switch_to(ids[i])
-
-    def set_theme(self, name):
-        if name not in themes.THEMES:
-            self.console.print(
-                Text(f"Unknown theme: {name}. Available: {', '.join(themes.names())}",
-                     style=self.theme["tool_err"])
-            )
-            return
-        self.theme_name = name
-        self.theme = themes.get(name)
-        themes.save_theme(name)
-        self.console.print(
-            Text(f"Theme switched to {name}.", style=self.theme["tool_ok"])
-        )
-
-    # --- Slash commands ------------------------------------------------------
-
-    def handle_command(self, text):
-        parts = text.strip().split(maxsplit=1)
-        cmd = parts[0][1:]  # drop leading /
+    async def _handle_slash(self, text):
+        parts = text[1:].split(maxsplit=1)
+        cmd = parts[0] if parts else ""
         arg = parts[1] if len(parts) > 1 else ""
         if cmd in ("help", "?"):
-            self.console.print(
-                Panel(
-                    Text(
-                        "/new          new tab\n"
-                        "/close        close current tab\n"
-                        "/next         next tab (Ctrl-N)\n"
-                        "/prev         previous tab (Ctrl-P)\n"
-                        "/tabs         list tabs\n"
-                        "/title <name> rename current tab\n"
-                        "/theme <name> switch theme: " + ", ".join(themes.names()) + "\n"
-                        "/clear        clear screen + replay session\n"
-                        "/quit         exit (brain keeps running)\n",
-                        style=self.theme["foreground"],
-                    ),
-                    title=Text("commands", style=f"bold {self.theme['primary']}"),
-                    border_style=self.theme["primary"],
-                )
+            self.notify(
+                "/new /close /next /prev /theme /title /quit",
+                title="commands", timeout=4,
             )
         elif cmd == "new":
-            self.new_tab()
+            await self.action_new_tab()
         elif cmd == "close":
-            self.close_tab()
+            await self.action_close_tab()
         elif cmd == "next":
-            self.cycle_tab(1)
+            self.action_next_tab()
         elif cmd == "prev":
-            self.cycle_tab(-1)
-        elif cmd == "tabs":
-            self.refresh_sessions()
-            self.status_line()
-        elif cmd == "title":
-            if not arg:
-                self.console.print(Text("usage: /title <name>", style=self.theme["muted"]))
-            else:
-                self.rpc.set_title(self.current_id, arg)
-                self.refresh_sessions()
-                self.status_line()
+            self.action_prev_tab()
         elif cmd == "theme":
-            if not arg:
-                self.console.print(
-                    Text(f"current: {self.theme_name}; available: {', '.join(themes.names())}",
-                         style=self.theme["muted"])
-                )
+            if arg in themes.names():
+                self.theme = arg
+                self._theme_name = arg
+                themes.save(arg)
+                self.notify(f"Theme: {arg}")
             else:
-                self.set_theme(arg)
-        elif cmd == "clear":
-            self.switch_to(self.current_id)
+                self.notify(f"available: {', '.join(themes.names())}")
+        elif cmd == "title":
+            pane = self._current_pane()
+            if pane and arg:
+                await self._call_rpc("set_title", sid=pane.session_id, title=arg)
+                tabs = self.query_one(TabbedContent)
+                tabs.get_tab(f"tab-{pane.session_id}").label = arg
         elif cmd in ("quit", "exit"):
-            raise EOFError()
+            self.exit()
         else:
-            self.console.print(
-                Text(f"unknown command: /{cmd}. /help for list.",
-                     style=self.theme["tool_err"])
-            )
+            self.notify(f"unknown: /{cmd}", severity="warning", timeout=2)
 
-    # --- Send a message + render the streaming response ----------------------
-
-    def send_message(self, text):
-        self.render_user(text)
-        t = self.theme
-        start = time.monotonic()
-
-        # Force-flush stdout after every print: prompt_toolkit's prompt()
-        # can leave the terminal in a state where subsequent rich.print
-        # output is queued in an internal buffer until the next user-
-        # triggered redraw (which is why responses only appear on tab
-        # cycle / clear). Explicit flush makes them visible immediately.
-        self.console.print(Text("  ...", style=t["tool_running"]))
-        sys.stdout.flush()
-
-        try:
-            for ev in self.rpc.send(self.current_id, text):
-                self._render_event(ev)
-                sys.stdout.flush()
-                if ev.get("event") in ("end_turn", "error"):
-                    break
-        except RpcError as e:
-            self.render_error(str(e))
-            sys.stdout.flush()
+    async def _send_to_brain(self, text):
+        pane = self._current_pane()
+        if pane is None:
             return
+        pane.add_user(text)
+        # Stream events from a thread because rpc.send is a blocking generator
+        sid = pane.session_id
+        active_tools = {}
 
-        self.last_latency_ms = int((time.monotonic() - start) * 1000)
-
-    def _render_event(self, ev):
-        t = self.theme
-        et = ev.get("event")
-        if et == "assistant_text":
-            self.render_assistant_text(ev.get("chunk", ""))
-        elif et == "tool_use":
-            name = ev.get("name", "?")
-            summary = ev.get("input_summary", "")
-            self.console.print(
-                Text(f"  ⟳ {name}({summary})", style=t["tool_running"])
-            )
-        elif et == "tool_result":
-            out = ev.get("output", {})
-            ok = isinstance(out, dict) and "error" not in out
-            self.render_tool_done(ev.get("name", "?"), out, ok)
-        elif et == "error":
-            self.render_error(ev.get("msg", "unknown error"))
-        elif et in ("user_msg", "end_turn"):
-            pass
-
-    def _render_event(self, ev):
-        t = self.theme
-        et = ev.get("event")
-        if et == "assistant_text":
-            self.render_assistant_text(ev.get("chunk", ""))
-        elif et == "tool_use":
-            name = ev.get("name", "?")
-            summary = ev.get("input_summary", "")
-            self.console.print(
-                Text(f"  ⟳ {name}({summary})", style=t["tool_running"])
-            )
-        elif et == "tool_result":
-            out = ev.get("output", {})
-            ok = isinstance(out, dict) and "error" not in out
-            self.render_tool_done(ev.get("name", "?"), out, ok)
-        elif et == "error":
-            self.render_error(ev.get("msg", "unknown error"))
-        elif et in ("user_msg", "end_turn"):
-            pass
-
-    # --- Main loop ------------------------------------------------------------
-
-    def run(self):
-        self.connect_and_init()
-        self.banner()
-        self.status_line()
-        self.console.print(
-            Text(
-                f"  Theme: {self.theme_name}    Type /help for commands.",
-                style=self.theme["muted"],
-            )
-        )
-
-        kb = KeyBindings()
-
-        @kb.add("c-t")
-        def _(event):
-            event.app.exit(result="__cmd:new")
-
-        @kb.add("c-w")
-        def _(event):
-            event.app.exit(result="__cmd:close")
-
-        @kb.add("c-n")
-        def _(event):
-            event.app.exit(result="__cmd:next")
-
-        @kb.add("c-p")
-        def _(event):
-            event.app.exit(result="__cmd:prev")
-
-        @kb.add("c-l")
-        def _(event):
-            event.app.exit(result="__cmd:clear")
-
-        while True:
+        def producer(loop):
             try:
-                hist = FileHistory(_hist_path(self.current_id))
-                session = PromptSession(
-                    history=hist,
-                    complete_style=CompleteStyle.READLINE_LIKE,
-                    key_bindings=kb,
+                for ev in self.rpc.send(sid, text):
+                    asyncio.run_coroutine_threadsafe(
+                        self._handle_event(pane, ev, active_tools), loop
+                    )
+            except RpcError as e:
+                asyncio.run_coroutine_threadsafe(
+                    self._handle_event(pane, {"event": "error", "msg": str(e)},
+                                        active_tools), loop
                 )
-                text = session.prompt(self.make_prompt())
-            except EOFError:
-                self.console.print(Text("bye.", style=self.theme["muted"]))
-                return
-            except KeyboardInterrupt:
-                self.console.print()
-                continue
 
-            if text is None:
-                continue
-            text = text.strip()
-            if not text:
-                continue
+        loop = asyncio.get_running_loop()
+        threading.Thread(target=producer, args=(loop,), daemon=True).start()
 
-            # Key bindings exit with __cmd:<name>; map to slash command
-            if text.startswith("__cmd:"):
-                self.handle_command("/" + text[len("__cmd:"):])
-                continue
-            if text.startswith("/"):
-                self.handle_command(text)
-                continue
-            try:
-                self.send_message(text)
-            except Exception as e:
-                self.render_error(f"{type(e).__name__}: {e}")
+    async def _handle_event(self, pane, ev, active_tools):
+        et = ev.get("event")
+        if et == "assistant_text":
+            pane.add_claude(ev.get("chunk", ""))
+        elif et == "tool_use":
+            tid = ev.get("id")
+            card = pane.add_tool(ev.get("name", "?"),
+                                 ev.get("input_summary", ""))
+            active_tools[tid] = card
+        elif et == "tool_result":
+            tid = ev.get("id")
+            card = active_tools.pop(tid, None)
+            out = ev.get("output", {})
+            ok = isinstance(out, dict) and "error" not in out
+            if card is not None:
+                card.set_result(out, ok)
+            else:
+                pane.add_tool(ev.get("name", "?"), "?").set_result(out, ok)
+        elif et == "error":
+            pane.add_error(ev.get("msg", "unknown error"))
+        elif et in ("user_msg", "end_turn"):
+            pass
 
 
 def run():
-    ShedOSTui().run()
+    # Make config / sessions / etc. importable when launched as a script
+    here = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, os.path.dirname(here))
+    ShedOSApp().run()

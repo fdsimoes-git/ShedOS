@@ -1,112 +1,155 @@
-"""Color themes for the TUI. Each theme maps semantic roles to colors.
+"""Theme definitions for the Textual TUI.
 
-Colors are written as truecolor hex strings; rich + prompt_toolkit both
-support them on terminals that advertise truecolor (most do today).
+Each theme returns a dict that maps to Textual's CSS variables. The app
+applies them via `app.theme = "<name>"` after registering Theme objects.
+
+Color picker philosophy: pair a strong primary, a softer surface for
+card backgrounds, and accent colors that pop for tool calls / errors.
 """
+from dataclasses import dataclass
 
-THEMES = {
-    "nord": {
-        "background": "#2e3440",
-        "foreground": "#eceff4",
-        "primary": "#88c0d0",       # cyan-blue
-        "secondary": "#81a1c1",     # blue
-        "accent": "#5e81ac",        # darker blue
-        "user": "#a3be8c",          # green
-        "assistant": "#88c0d0",     # cyan-blue
-        "tool_running": "#ebcb8b",  # yellow
-        "tool_ok": "#a3be8c",       # green
-        "tool_err": "#bf616a",      # red
-        "muted": "#4c566a",         # gray
-        "code_bg": "#3b4252",
-    },
-    "dracula": {
-        "background": "#282a36",
-        "foreground": "#f8f8f2",
-        "primary": "#bd93f9",       # purple
-        "secondary": "#ff79c6",     # pink
-        "accent": "#8be9fd",        # cyan
-        "user": "#50fa7b",          # green
-        "assistant": "#bd93f9",     # purple
-        "tool_running": "#f1fa8c",  # yellow
-        "tool_ok": "#50fa7b",
-        "tool_err": "#ff5555",
-        "muted": "#6272a4",
-        "code_bg": "#44475a",
-    },
-    "tokyo-night": {
-        "background": "#1a1b26",
-        "foreground": "#c0caf5",
-        "primary": "#7aa2f7",
-        "secondary": "#bb9af7",
-        "accent": "#7dcfff",
-        "user": "#9ece6a",
-        "assistant": "#7aa2f7",
-        "tool_running": "#e0af68",
-        "tool_ok": "#9ece6a",
-        "tool_err": "#f7768e",
-        "muted": "#565f89",
-        "code_bg": "#24283b",
-    },
-    "gruvbox": {
-        "background": "#282828",
-        "foreground": "#ebdbb2",
-        "primary": "#fabd2f",       # yellow
-        "secondary": "#8ec07c",     # aqua
-        "accent": "#d3869b",        # purple
-        "user": "#b8bb26",          # green
-        "assistant": "#fabd2f",
-        "tool_running": "#fe8019",  # orange
-        "tool_ok": "#b8bb26",
-        "tool_err": "#fb4934",
-        "muted": "#928374",
-        "code_bg": "#3c3836",
-    },
-    "solarized-dark": {
-        "background": "#002b36",
-        "foreground": "#839496",
-        "primary": "#268bd2",
-        "secondary": "#2aa198",
-        "accent": "#d33682",
-        "user": "#859900",
-        "assistant": "#268bd2",
-        "tool_running": "#b58900",
-        "tool_ok": "#859900",
-        "tool_err": "#dc322f",
-        "muted": "#586e75",
-        "code_bg": "#073642",
-    },
-    "monokai": {
-        "background": "#272822",
-        "foreground": "#f8f8f2",
-        "primary": "#a6e22e",
-        "secondary": "#66d9ef",
-        "accent": "#f92672",
-        "user": "#a6e22e",
-        "assistant": "#66d9ef",
-        "tool_running": "#fd971f",
-        "tool_ok": "#a6e22e",
-        "tool_err": "#f92672",
-        "muted": "#75715e",
-        "code_bg": "#3e3d32",
-    },
+
+@dataclass
+class Palette:
+    name: str
+    surface: str          # app background
+    panel: str            # card background (slightly lighter than surface)
+    panel_user: str       # background tint for user cards
+    panel_assistant: str  # background tint for assistant cards
+    panel_tool: str       # background tint for tool cards
+    primary: str
+    secondary: str
+    accent: str
+    success: str
+    warning: str
+    error: str
+    foreground: str
+    muted: str
+
+
+PALETTES = {
+    "nord": Palette(
+        name="nord",
+        surface="#2e3440",
+        panel="#3b4252",
+        panel_user="#3b5a4a",
+        panel_assistant="#3a4d5e",
+        panel_tool="#4a4530",
+        primary="#88c0d0",
+        secondary="#81a1c1",
+        accent="#5e81ac",
+        success="#a3be8c",
+        warning="#ebcb8b",
+        error="#bf616a",
+        foreground="#eceff4",
+        muted="#4c566a",
+    ),
+    "dracula": Palette(
+        name="dracula",
+        surface="#282a36",
+        panel="#44475a",
+        panel_user="#3a4a3a",
+        panel_assistant="#3e3a52",
+        panel_tool="#52483a",
+        primary="#bd93f9",
+        secondary="#ff79c6",
+        accent="#8be9fd",
+        success="#50fa7b",
+        warning="#f1fa8c",
+        error="#ff5555",
+        foreground="#f8f8f2",
+        muted="#6272a4",
+    ),
+    "tokyo-night": Palette(
+        name="tokyo-night",
+        surface="#1a1b26",
+        panel="#24283b",
+        panel_user="#2a3a2a",
+        panel_assistant="#2a2f4a",
+        panel_tool="#3a3525",
+        primary="#7aa2f7",
+        secondary="#bb9af7",
+        accent="#7dcfff",
+        success="#9ece6a",
+        warning="#e0af68",
+        error="#f7768e",
+        foreground="#c0caf5",
+        muted="#565f89",
+    ),
+    "gruvbox": Palette(
+        name="gruvbox",
+        surface="#282828",
+        panel="#3c3836",
+        panel_user="#3a4a2a",
+        panel_assistant="#503a2a",
+        panel_tool="#503e25",
+        primary="#fabd2f",
+        secondary="#8ec07c",
+        accent="#d3869b",
+        success="#b8bb26",
+        warning="#fe8019",
+        error="#fb4934",
+        foreground="#ebdbb2",
+        muted="#928374",
+    ),
+    "solarized-dark": Palette(
+        name="solarized-dark",
+        surface="#002b36",
+        panel="#073642",
+        panel_user="#1a3a2a",
+        panel_assistant="#0a3a4a",
+        panel_tool="#3a3025",
+        primary="#268bd2",
+        secondary="#2aa198",
+        accent="#d33682",
+        success="#859900",
+        warning="#b58900",
+        error="#dc322f",
+        foreground="#839496",
+        muted="#586e75",
+    ),
+    "monokai": Palette(
+        name="monokai",
+        surface="#272822",
+        panel="#3e3d32",
+        panel_user="#3a4a2a",
+        panel_assistant="#2a3a4a",
+        panel_tool="#4a3525",
+        primary="#a6e22e",
+        secondary="#66d9ef",
+        accent="#f92672",
+        success="#a6e22e",
+        warning="#fd971f",
+        error="#f92672",
+        foreground="#f8f8f2",
+        muted="#75715e",
+    ),
 }
 
 DEFAULT_THEME = "nord"
 
 
-def load_saved_theme(path="/var/lib/shedos/theme"):
+def names():
+    return list(PALETTES.keys())
+
+
+def get(name) -> Palette:
+    return PALETTES.get(name, PALETTES[DEFAULT_THEME])
+
+
+def load_saved(path="/var/lib/shedos/theme"):
     try:
         with open(path) as f:
-            name = f.read().strip()
-        if name in THEMES:
-            return name
+            n = f.read().strip()
+        if n in PALETTES:
+            return n
     except OSError:
         pass
     return DEFAULT_THEME
 
 
-def save_theme(name, path="/var/lib/shedos/theme"):
-    if name not in THEMES:
+def save(name, path="/var/lib/shedos/theme"):
+    if name not in PALETTES:
         return False
     try:
         import os
@@ -118,9 +161,27 @@ def save_theme(name, path="/var/lib/shedos/theme"):
         return False
 
 
-def get(name):
-    return THEMES.get(name, THEMES[DEFAULT_THEME])
-
-
-def names():
-    return list(THEMES.keys())
+def textual_theme(name):
+    """Build a textual.theme.Theme from a palette."""
+    from textual.theme import Theme
+    p = get(name)
+    return Theme(
+        name=name,
+        primary=p.primary,
+        secondary=p.secondary,
+        accent=p.accent,
+        success=p.success,
+        warning=p.warning,
+        error=p.error,
+        background=p.surface,
+        surface=p.panel,
+        panel=p.panel,
+        foreground=p.foreground,
+        dark=True,
+        variables={
+            "panel-user": p.panel_user,
+            "panel-assistant": p.panel_assistant,
+            "panel-tool": p.panel_tool,
+            "muted": p.muted,
+        },
+    )

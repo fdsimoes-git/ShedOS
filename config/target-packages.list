@@ -33,6 +33,8 @@ py3-httpx
 # TUI runtime (v0.3.0+)
 py3-prompt_toolkit
 py3-rich
+# pip needed to install textual (not packaged for Alpine 3.23)
+py3-pip
 
 # Convenience
 htop

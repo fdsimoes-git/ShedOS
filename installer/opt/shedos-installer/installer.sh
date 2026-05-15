@@ -299,6 +299,12 @@ chown -R root:root /root
 say "ensuring root password is unlocked (key-only ssh enforced via sshd_config)"
 passwd -u root 2>/dev/null || true
 
+say "installing textual via pip (modern TUI framework, not packaged for Alpine)"
+# --break-system-packages: PEP 668 requires it for system-managed Pythons.
+# We're on a single-user appliance so installing into the system site is fine.
+python3 -m pip install --quiet --no-cache-dir --break-system-packages textual \
+    || say "WARNING: textual pip install failed; TUI will use rich-only fallback"
+
 say "cleaning apk cache"
 apk cache clean >/dev/null 2>&1 || true
 
