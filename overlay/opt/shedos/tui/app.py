@@ -153,9 +153,11 @@ class ShedOSApp(App):
 
     async def _add_tab(self, session_id, title, history=False):
         tabs = self.query_one(TabbedContent)
-        pane_id = f"tab-{session_id}"
-        pane = ChatPane(session_id, title, id=pane_id)
-        await tabs.add_pane(TabPane(title, pane, id=pane_id))
+        # Different IDs for TabPane vs ChatPane to avoid query_one ambiguity.
+        tab_id = f"tab-{session_id}"
+        chat_id = f"chat-{session_id}"
+        pane = ChatPane(session_id, title, id=chat_id)
+        await tabs.add_pane(TabPane(title, pane, id=tab_id))
         if history:
             await self._populate_history(pane)
         return pane
@@ -184,12 +186,12 @@ class ShedOSApp(App):
 
     def _current_pane(self):
         tabs = self.query_one(TabbedContent)
-        active = tabs.active
-        if not active:
+        active = tabs.active  # this is the TabPane id like "tab-<sid>"
+        if not active or not active.startswith("tab-"):
             return None
+        chat_id = "chat-" + active[len("tab-"):]
         try:
-            pane = self.query_one(f"#{active}", ChatPane)
-            return pane
+            return self.query_one(f"#{chat_id}", ChatPane)
         except NoMatches:
             return None
 
