@@ -47,6 +47,10 @@ mesa-dri-gallium
 xf86-video-fbdev
 xf86-input-libinput
 openbox
+# eudev (= udev port for Alpine) — Xorg needs it to enumerate input devices
+eudev
+eudev-openrc
+libinput-udev
 chromium
 chromium-swiftshader
 font-jetbrains-mono
