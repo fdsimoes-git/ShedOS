@@ -1,6 +1,6 @@
 /* ShedOS GUI — modern chat-app aesthetic (Discord/Linear/Claude.ai vibe). */
 
-:root {
+:root, [data-theme="tokyo-night"] {
   /* Tokyo Night–inspired dark palette */
   --bg: #1a1b26;
   --bg-elev-1: #16161e;
@@ -21,6 +21,59 @@
   --tool-accent-running: #e0af68;
   --tool-accent-ok: #9ece6a;
   --tool-accent-err: #f7768e;
+}
+
+[data-theme="dracula"] {
+  --bg: #282a36; --bg-elev-1: #21222c; --bg-elev-2: #343746; --bg-elev-3: #44475a;
+  --border: #44475a; --border-strong: #6272a4;
+  --text: #f8f8f2; --text-muted: #6272a4; --text-dim: #44475a;
+  --accent: #bd93f9; --accent-2: #ff79c6; --accent-3: #8be9fd;
+  --user-bubble: #44475a; --user-accent: #50fa7b;
+  --assistant-bubble: #343746; --tool-bubble: #383a59;
+  --tool-accent-running: #f1fa8c; --tool-accent-ok: #50fa7b; --tool-accent-err: #ff5555;
+}
+
+[data-theme="nord"] {
+  --bg: #2e3440; --bg-elev-1: #232831; --bg-elev-2: #3b4252; --bg-elev-3: #434c5e;
+  --border: #434c5e; --border-strong: #4c566a;
+  --text: #eceff4; --text-muted: #81a1c1; --text-dim: #4c566a;
+  --accent: #88c0d0; --accent-2: #b48ead; --accent-3: #8fbcbb;
+  --user-bubble: #3b4252; --user-accent: #a3be8c;
+  --assistant-bubble: #3b4252; --tool-bubble: #434c5e;
+  --tool-accent-running: #ebcb8b; --tool-accent-ok: #a3be8c; --tool-accent-err: #bf616a;
+}
+
+[data-theme="gruvbox"] {
+  --bg: #282828; --bg-elev-1: #1d2021; --bg-elev-2: #3c3836; --bg-elev-3: #504945;
+  --border: #504945; --border-strong: #665c54;
+  --text: #ebdbb2; --text-muted: #a89984; --text-dim: #7c6f64;
+  --accent: #83a598; --accent-2: #d3869b; --accent-3: #8ec07c;
+  --user-bubble: #3c3836; --user-accent: #b8bb26;
+  --assistant-bubble: #3c3836; --tool-bubble: #504945;
+  --tool-accent-running: #fabd2f; --tool-accent-ok: #b8bb26; --tool-accent-err: #fb4934;
+}
+
+[data-theme="solarized-dark"] {
+  --bg: #002b36; --bg-elev-1: #001f27; --bg-elev-2: #073642; --bg-elev-3: #0e4651;
+  --border: #073642; --border-strong: #586e75;
+  --text: #eee8d5; --text-muted: #93a1a1; --text-dim: #586e75;
+  --accent: #268bd2; --accent-2: #6c71c4; --accent-3: #2aa198;
+  --user-bubble: #073642; --user-accent: #859900;
+  --assistant-bubble: #073642; --tool-bubble: #0e4651;
+  --tool-accent-running: #b58900; --tool-accent-ok: #859900; --tool-accent-err: #dc322f;
+}
+
+[data-theme="monokai"] {
+  --bg: #272822; --bg-elev-1: #1e1f1a; --bg-elev-2: #3e3d32; --bg-elev-3: #49483e;
+  --border: #49483e; --border-strong: #75715e;
+  --text: #f8f8f2; --text-muted: #75715e; --text-dim: #49483e;
+  --accent: #66d9ef; --accent-2: #ae81ff; --accent-3: #a6e22e;
+  --user-bubble: #3e3d32; --user-accent: #a6e22e;
+  --assistant-bubble: #3e3d32; --tool-bubble: #49483e;
+  --tool-accent-running: #e6db74; --tool-accent-ok: #a6e22e; --tool-accent-err: #f92672;
+}
+
+:root {
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
@@ -31,6 +84,113 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text",
                system-ui, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ---------- Settings modal ----------------------------------------------- */
+.modal {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.modal[hidden] { display: none; }
+.modal-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+}
+.modal-card {
+  position: relative;
+  width: min(640px, 92vw);
+  max-height: 86vh;
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev-2);
+}
+.modal-header h2 {
+  font-size: 15px; font-weight: 600; color: var(--text);
+}
+.modal-body {
+  padding: 18px;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 22px;
+}
+.settings-section h3 {
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.settings-section .hint {
+  margin-top: 8px;
+  font-size: 11px; color: var(--text-muted);
+}
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+.theme-swatch {
+  border: 2px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 10px;
+  background: var(--bg-elev-2);
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.1s;
+  display: flex; flex-direction: column; gap: 8px;
+  text-align: left;
+  color: var(--text);
+}
+.theme-swatch:hover { transform: translateY(-1px); }
+.theme-swatch.active { border-color: var(--accent); }
+.theme-swatch .swatch-strip {
+  display: flex; gap: 4px;
+}
+.theme-swatch .swatch-strip span {
+  flex: 1; height: 16px; border-radius: 4px;
+}
+.theme-swatch .swatch-name {
+  font-size: 12px; font-weight: 500;
+}
+.kv-row {
+  display: flex; justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.kv-row:last-child { border-bottom: none; }
+.kv-row .k { color: var(--text-muted); }
+.kv-row .v { color: var(--text); font-family: var(--font-mono); font-size: 12px; }
+.toggle {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0;
+  font-size: 13px; color: var(--text);
+  cursor: pointer;
+}
+.toggle input { accent-color: var(--accent); }
+.persona-detail summary {
+  cursor: pointer; font-size: 12px; color: var(--text-muted);
+  margin: 6px 0;
+}
+.persona-text {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

@@ -19,17 +19,21 @@ Endpoints:
 import asyncio
 import json
 import os
+import socket
 import sys
 
 from aiohttp import WSMsgType, web
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import config
+
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 RENDER_DIR = "/var/lib/shedos/render"
 BRAIN_SOCK = "/run/shedos-brain.sock"
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 8080
+SHEDOS_VERSION = "0.5.0"
 
 
 class BrainClient:
@@ -185,6 +189,59 @@ async def handle_sessions_title(request):
     return web.json_response(res)
 
 
+def _primary_ip():
+    """Best-effort: find the LAN IP without resolving DNS."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # connecting to a UDP socket doesn't actually send anything
+        s.connect(("10.255.255.255", 1))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+async def handle_settings_get(request):
+    persona_choice = config.load_persona_choice()
+    persona_text = config.load_persona()
+    style = config.load_style()
+    try:
+        host = socket.gethostname()
+    except Exception:
+        host = "shedos"
+    return web.json_response({
+        "persona": {
+            "active": persona_choice,
+            "available": list(config.PERSONA_PRESETS) + ["custom"],
+            "text": persona_text,
+        },
+        "style": style,
+        "system": {
+            "version": SHEDOS_VERSION,
+            "hostname": host,
+            "ip": _primary_ip(),
+        },
+    })
+
+
+async def handle_settings_put(request):
+    body = await request.json()
+    style_in = body.get("style")
+    persona_in = body.get("persona")
+    out = {}
+    if isinstance(style_in, dict):
+        out["style"] = config.save_style(style_in)
+    if isinstance(persona_in, str):
+        try:
+            config.save_persona_choice(persona_in)
+            out["persona"] = config.load_persona_choice()
+        except ValueError as e:
+            return web.json_response(
+                {"error": str(e)}, status=400)
+    return web.json_response(out)
+
+
 async def handle_ws(request):
     """WebSocket: bidirectional event stream.
 
@@ -239,6 +296,8 @@ def make_app():
     app.router.add_delete("/api/sessions/{sid}", handle_sessions_delete)
     app.router.add_get("/api/sessions/{sid}/messages", handle_sessions_history)
     app.router.add_put("/api/sessions/{sid}/title", handle_sessions_title)
+    app.router.add_get("/api/settings", handle_settings_get)
+    app.router.add_put("/api/settings", handle_settings_put)
     app.router.add_get("/ws", handle_ws)
     if os.path.isdir(WEB_DIR):
         app.router.add_static("/static", WEB_DIR)

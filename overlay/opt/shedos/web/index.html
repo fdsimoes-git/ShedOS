@@ -15,10 +15,69 @@
     </div>
     <nav class="tabs" id="tabs"></nav>
     <button class="btn-icon" id="new-tab-btn" title="New tab (⌘T)">＋</button>
+    <button class="btn-icon" id="settings-btn" title="Settings">⚙</button>
     <div class="status" id="status">
       <span class="dot"></span><span id="status-text">connecting…</span>
     </div>
   </header>
+
+  <div class="modal" id="settings-modal" hidden>
+    <div class="modal-backdrop" data-close="1"></div>
+    <div class="modal-card" role="dialog" aria-labelledby="settings-title">
+      <header class="modal-header">
+        <h2 id="settings-title">Settings</h2>
+        <button class="btn-icon" data-close="1" title="Close">✕</button>
+      </header>
+      <div class="modal-body">
+        <section class="settings-section">
+          <h3>Theme</h3>
+          <div class="theme-grid" id="theme-grid"></div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Persona</h3>
+          <div class="kv-row">
+            <span class="k">Active</span>
+            <span class="v" id="persona-name">—</span>
+          </div>
+          <details class="persona-detail">
+            <summary>Show persona text</summary>
+            <pre class="persona-text" id="persona-text"></pre>
+          </details>
+          <p class="hint">Personas are chosen during install and can be
+            re-applied with <code>shedos-set-persona &lt;name&gt;</code> in
+            an SSH session. Live in-GUI editing is planned for a future
+            release.</p>
+        </section>
+
+        <section class="settings-section">
+          <h3>Conversation style</h3>
+          <label class="toggle">
+            <input type="checkbox" id="style-terse">
+            <span>Terse — short, minimal narration</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="style-formal">
+            <span>Formal tone</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="style-emojis">
+            <span>Allow emojis</span>
+          </label>
+          <p class="hint">Style takes effect on the next message you send
+            — no restart needed.</p>
+        </section>
+
+        <section class="settings-section">
+          <h3>System</h3>
+          <div class="kv-row"><span class="k">Version</span><span class="v" id="sys-version">—</span></div>
+          <div class="kv-row"><span class="k">Hostname</span><span class="v" id="sys-host">—</span></div>
+          <div class="kv-row"><span class="k">IP</span><span class="v" id="sys-ip">—</span></div>
+          <div class="kv-row"><span class="k">Sessions</span><span class="v" id="sys-sessions">—</span></div>
+        </section>
+      </div>
+    </div>
+  </div>
 
   <main id="main">
     <section class="chat" id="chat" aria-live="polite"></section>

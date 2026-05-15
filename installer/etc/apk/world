@@ -5,3 +5,5 @@ e2fsprogs
 dosfstools
 apk-tools
 ca-certificates
+python3
+py3-rich

@@ -35,7 +35,7 @@ def _summarize_args(args, limit=80):
     return s
 
 
-async def turn(client, persona, session, user_text):
+async def turn(client, session, user_text):
     """Run one conversational turn. Yields events for the RPC layer.
 
     Each event is a dict with at least {event: "..."}; the RPC layer
@@ -47,6 +47,10 @@ async def turn(client, persona, session, user_text):
     yield {"event": "user_msg", "msg": user_msg}
 
     messages = session.messages
+    # Re-compose the system prompt on every turn so settings changes
+    # (persona switch, style toggles) take effect without restarting the
+    # daemon.
+    persona = config.compose_system_prompt()
 
     for _ in range(config.MAX_ITERATIONS):
         try:
@@ -123,11 +127,10 @@ async def amain():
             "[brain] no token at /etc/shedos/token — set one before starting daemon\n"
         )
         sys.exit(1)
-    persona = config.load_persona()
     client = Client(token)
 
     async def handler(session, text):
-        async for ev in turn(client, persona, session, text):
+        async for ev in turn(client, session, text):
             yield ev
 
     server = RpcServer(brain_handler=handler)

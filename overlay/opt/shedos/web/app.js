@@ -13,6 +13,8 @@
     input:       $("#input"),
     sendBtn:     $("#send-btn"),
     newTabBtn:   $("#new-tab-btn"),
+    settingsBtn: $("#settings-btn"),
+    settingsModal: $("#settings-modal"),
     status:      $("#status"),
     statusText:  $("#status-text"),
     hint:        $("#hint"),
@@ -593,6 +595,134 @@
     els.input.style.height = Math.min(els.input.scrollHeight, 240) + "px";
   }
   els.newTabBtn.addEventListener("click", newChatTab);
+
+  // ---------- Settings modal --------------------------------------------
+
+  const THEMES = [
+    { id: "tokyo-night",     name: "Tokyo Night",
+      strip: ["#1a1b26", "#7aa2f7", "#bb9af7", "#9ece6a"] },
+    { id: "dracula",         name: "Dracula",
+      strip: ["#282a36", "#bd93f9", "#ff79c6", "#50fa7b"] },
+    { id: "nord",            name: "Nord",
+      strip: ["#2e3440", "#88c0d0", "#b48ead", "#a3be8c"] },
+    { id: "gruvbox",         name: "Gruvbox",
+      strip: ["#282828", "#83a598", "#d3869b", "#b8bb26"] },
+    { id: "solarized-dark",  name: "Solarized Dark",
+      strip: ["#002b36", "#268bd2", "#6c71c4", "#859900"] },
+    { id: "monokai",         name: "Monokai",
+      strip: ["#272822", "#66d9ef", "#ae81ff", "#a6e22e"] },
+  ];
+
+  function applyTheme(id) {
+    document.documentElement.setAttribute("data-theme", id);
+    try { localStorage.setItem("shedos.theme", id); } catch {}
+  }
+
+  function loadSavedTheme() {
+    let saved = "tokyo-night";
+    try { saved = localStorage.getItem("shedos.theme") || saved; } catch {}
+    if (!THEMES.find(t => t.id === saved)) saved = "tokyo-night";
+    applyTheme(saved);
+    return saved;
+  }
+
+  function renderThemeGrid(activeId) {
+    const grid = $("#theme-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+    THEMES.forEach(t => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "theme-swatch" + (t.id === activeId ? " active" : "");
+      btn.dataset.themeId = t.id;
+      const strip = document.createElement("div");
+      strip.className = "swatch-strip";
+      t.strip.forEach(c => {
+        const cell = document.createElement("span");
+        cell.style.background = c;
+        strip.appendChild(cell);
+      });
+      const name = document.createElement("div");
+      name.className = "swatch-name";
+      name.textContent = t.name;
+      btn.appendChild(strip);
+      btn.appendChild(name);
+      btn.addEventListener("click", () => {
+        applyTheme(t.id);
+        renderThemeGrid(t.id);
+      });
+      grid.appendChild(btn);
+    });
+  }
+
+  let _settingsLoaded = false;
+  let _styleSaveTimer = null;
+
+  async function loadSettings() {
+    const data = await apiGet("/api/settings");
+    $("#persona-name").textContent = data.persona.active;
+    $("#persona-text").textContent = data.persona.text;
+    $("#style-terse").checked  = !!data.style.terse;
+    $("#style-formal").checked = !!data.style.formal;
+    $("#style-emojis").checked = !!data.style.emojis;
+    $("#sys-version").textContent = data.system.version;
+    $("#sys-host").textContent    = data.system.hostname;
+    $("#sys-ip").textContent      = data.system.ip;
+    try {
+      const sess = await apiGet("/api/sessions");
+      const arr = sess.sessions || sess;
+      $("#sys-sessions").textContent = String(arr.length || 0);
+    } catch { /* ignore */ }
+  }
+
+  async function saveStyle() {
+    const style = {
+      terse:  $("#style-terse").checked,
+      formal: $("#style-formal").checked,
+      emojis: $("#style-emojis").checked,
+    };
+    try {
+      await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ style }),
+      });
+    } catch (e) {
+      addError(`save style: ${e.message}`);
+    }
+  }
+
+  function debouncedSaveStyle() {
+    clearTimeout(_styleSaveTimer);
+    _styleSaveTimer = setTimeout(saveStyle, 250);
+  }
+
+  function openSettings() {
+    els.settingsModal.hidden = false;
+    if (!_settingsLoaded) {
+      renderThemeGrid(document.documentElement.getAttribute("data-theme")
+                       || "tokyo-night");
+      ["style-terse", "style-formal", "style-emojis"].forEach(id => {
+        $("#" + id).addEventListener("change", debouncedSaveStyle);
+      });
+      _settingsLoaded = true;
+    }
+    loadSettings().catch(e => addError(`settings: ${e.message}`));
+  }
+
+  function closeSettings() {
+    els.settingsModal.hidden = true;
+  }
+
+  els.settingsBtn.addEventListener("click", openSettings);
+  els.settingsModal.addEventListener("click", (e) => {
+    if (e.target.dataset && e.target.dataset.close) closeSettings();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !els.settingsModal.hidden) closeSettings();
+  });
+
+  loadSavedTheme();
 
   els.hint.textContent = "Enter ↵ send · Shift+↵ newline · ⌘T new tab · ⌘W close tab";
 

@@ -180,14 +180,50 @@ apply_overlay() {
     say "overlay applied. files written:"
     find "$MNT/opt/shedos" "$MNT/etc/shedos" "$MNT/etc/init.d/shedos-brain" 2>&1 | head -20 || true
 
-    # Token + ssh key were baked into the installer apkovl by build.sh.
-    if [ -f /etc/shedos/token ]; then
+    # Source wizard env (wizard.py writes /tmp/shedos-wizard.env before
+    # exec'ing this script). Empty/missing means use the built-in defaults.
+    TOKEN_OVERRIDE=""
+    PERSONA_NAME="default"
+    STYLE_TERSE=1
+    STYLE_FORMAL=0
+    STYLE_EMOJIS=0
+    if [ -f /tmp/shedos-wizard.env ]; then
+        say "applying wizard choices from /tmp/shedos-wizard.env"
+        . /tmp/shedos-wizard.env
+    else
+        say "no wizard env — using built-in defaults (persona=default, terse)"
+    fi
+
+    # Token: wizard override beats baked-in ISO token beats nothing.
+    /usr/bin/install -d -m 0700 "$MNT/etc/shedos"
+    if [ -n "$TOKEN_OVERRIDE" ]; then
+        say "writing wizard-supplied token to target"
+        printf '%s' "$TOKEN_OVERRIDE" > "$MNT/etc/shedos/token"
+        chmod 600 "$MNT/etc/shedos/token"
+    elif [ -f /etc/shedos/token ]; then
         say "copying token from installer -> target"
-        /usr/bin/install -d -m 0700 "$MNT/etc/shedos"
         /usr/bin/install -m 0600 /etc/shedos/token "$MNT/etc/shedos/token"
     else
-        say "no token on installer (first-boot will prompt)"
+        say "no token (wizard skipped + no ISO bake) — first-boot will prompt"
     fi
+
+    # Persona choice + style.json. The brain re-reads these on every turn
+    # so the settings UI can flip them at runtime.
+    say "writing persona-choice=$PERSONA_NAME"
+    printf '%s\n' "$PERSONA_NAME" > "$MNT/etc/shedos/persona-choice"
+    chmod 644 "$MNT/etc/shedos/persona-choice"
+
+    say "writing style.json (terse=$STYLE_TERSE formal=$STYLE_FORMAL emojis=$STYLE_EMOJIS)"
+    _bool() { [ "$1" = "1" ] && echo "true" || echo "false"; }
+    cat > "$MNT/etc/shedos/style.json" <<EOF
+{
+  "terse":  $(_bool "$STYLE_TERSE"),
+  "formal": $(_bool "$STYLE_FORMAL"),
+  "emojis": $(_bool "$STYLE_EMOJIS")
+}
+EOF
+    chmod 644 "$MNT/etc/shedos/style.json"
+
     if [ -f /root/.ssh/authorized_keys ]; then
         say "copying ssh authorized_keys -> target"
         /usr/bin/install -d -m 0700 "$MNT/root/.ssh"
