@@ -235,8 +235,10 @@ set -e
 say() { printf '\n\033[1;34m[shedos-install:chroot]\033[0m %s\n' "$*"; }
 
 say "enabling OpenRC services"
-for svc in devfs dmesg mdev hwdrivers; do rc-update add $svc sysinit; done
-# eudev replaces mdev for X11/Xorg input device discovery
+# Use eudev (udev) instead of busybox mdev — Xorg requires udev for
+# input device enumeration. The two device managers conflict if both
+# are in sysinit, so we ONLY register udev.
+for svc in devfs dmesg hwdrivers; do rc-update add $svc sysinit; done
 for svc in udev udev-trigger udev-settle; do rc-update add $svc sysinit 2>/dev/null || true; done
 for svc in hwclock modules sysctl hostname bootmisc syslog networking; do rc-update add $svc boot; done
 for svc in local sshd shedos-brain shedos-web; do rc-update add $svc default; done
