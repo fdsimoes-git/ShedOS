@@ -43,7 +43,8 @@ py3-aiohttp
 xorg-server
 xinit
 mesa-dri-gallium
-xf86-video-vmware
+# xf86-video-vmware is x86-only; use the generic framebuffer driver for arm64
+xf86-video-fbdev
 xf86-input-libinput
 openbox
 chromium
