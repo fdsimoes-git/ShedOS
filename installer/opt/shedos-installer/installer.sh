@@ -235,9 +235,13 @@ set -e
 say() { printf '\n\033[1;34m[shedos-install:chroot]\033[0m %s\n' "$*"; }
 
 say "enabling OpenRC services"
-for svc in devfs dmesg mdev hwdrivers; do rc-update add $svc sysinit; done
+# Use eudev (udev) instead of busybox mdev — Xorg requires udev for
+# input device enumeration. The two device managers conflict if both
+# are in sysinit, so we ONLY register udev.
+for svc in devfs dmesg hwdrivers; do rc-update add $svc sysinit; done
+for svc in udev udev-trigger udev-settle; do rc-update add $svc sysinit 2>/dev/null || true; done
 for svc in hwclock modules sysctl hostname bootmisc syslog networking; do rc-update add $svc boot; done
-for svc in local sshd; do rc-update add $svc default; done
+for svc in local sshd shedos-brain shedos-web; do rc-update add $svc default; done
 for svc in mount-ro killprocs savecache; do rc-update add $svc shutdown; done
 
 say "generating SSH host keys"
@@ -285,8 +289,25 @@ ls -la /boot/efi/EFI/BOOT/
 say "grub-mkconfig"
 grub-mkconfig -o /boot/grub/grub.cfg
 
-say "locking root password (key-only ssh)"
-passwd -l root || true
+say "tightening /root perms (StrictModes precaution)"
+chmod 700 /root
+chmod 700 /root/.ssh 2>/dev/null || true
+chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
+chown -R root:root /root
+
+# Don't `passwd -l root` — sshd's internal lock check rejects locked
+# accounts EVEN with UsePAM=no, so locking it breaks key-based SSH.
+# PasswordAuthentication=no + PermitRootLogin=prohibit-password in
+# sshd_config already enforce key-only login. Leaving the password
+# field empty (root::...) is the right state.
+say "ensuring root password is unlocked (key-only ssh enforced via sshd_config)"
+passwd -u root 2>/dev/null || true
+
+say "installing textual via pip (modern TUI framework, not packaged for Alpine)"
+# --break-system-packages: PEP 668 requires it for system-managed Pythons.
+# We're on a single-user appliance so installing into the system site is fine.
+python3 -m pip install --quiet --no-cache-dir --break-system-packages textual \
+    || say "WARNING: textual pip install failed; TUI will use rich-only fallback"
 
 say "cleaning apk cache"
 apk cache clean >/dev/null 2>&1 || true

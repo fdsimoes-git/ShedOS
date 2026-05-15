@@ -30,5 +30,32 @@ curl
 python3
 py3-httpx
 
+# TUI runtime (v0.3.0+, fallback for serial/ssh access)
+py3-prompt_toolkit
+py3-rich
+# pip needed to install textual (not packaged for Alpine 3.23)
+py3-pip
+
+# Web bridge (v0.4.0): aiohttp serves the GUI's HTTP + WebSocket
+py3-aiohttp
+
+# GUI stack (v0.4.0): X11 + WM + Chromium app mode on tty1
+xorg-server
+xinit
+mesa-dri-gallium
+# xf86-video-vmware is x86-only; use the generic framebuffer driver for arm64
+xf86-video-fbdev
+xf86-input-libinput
+openbox
+# eudev (= udev port for Alpine) — Xorg needs it to enumerate input devices
+eudev
+eudev-openrc
+libinput-udev
+chromium
+chromium-swiftshader
+font-jetbrains-mono
+font-noto
+ttf-dejavu
+
 # Convenience
 htop

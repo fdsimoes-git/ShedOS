@@ -4,21 +4,15 @@
 ::sysinit:/sbin/openrc boot
 ::wait:/sbin/openrc default
 
-# ttyS0 (the Fusion virtual serial port, exposed to the host as a Unix
-# socket) is the primary interface. busybox getty handles session +
-# controlling-tty setup, then execs run-brain.sh which execs the Claude
-# agent (python3 + py3-httpx are pre-installed on the target system).
-# Init respawns on exit.
-ttyS0::respawn:/sbin/getty -L -n -l /opt/shedos/run-brain.sh -i 115200 ttyS0 vt100
-# Framebuffer console: also runs the brain so you can talk to Claude inside
-# the Fusion window. This is a separate Python process from the serial one,
-# so they have independent conversation histories.
-tty1::respawn:/sbin/getty -n -l /opt/shedos/run-brain.sh -i 38400 tty1
+# tty1 (Fusion framebuffer): X11 + Chromium app mode = ShedOS GUI.
+# ttyS0 (serial pipe to host): Textual TUI for `make tui` / SSH access.
+# Both talk to the same brain daemon over /run/shedos-brain.sock.
+tty1::respawn:/sbin/getty -n -l /opt/shedos/run-gui.sh -i 38400 tty1
+ttyS0::respawn:/sbin/getty -L -n -l /opt/shedos/run-tui.sh -i 115200 ttyS0 vt100
 tty2::respawn:/sbin/getty 38400 tty2
 tty3::respawn:/sbin/getty 38400 tty3
 tty4::respawn:/sbin/getty 38400 tty4
 tty5::respawn:/sbin/getty 38400 tty5
 tty6::respawn:/sbin/getty 38400 tty6
 
-# Stuff to do before rebooting
 ::shutdown:/sbin/openrc shutdown

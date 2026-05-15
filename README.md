@@ -53,7 +53,8 @@ mandatory `"You are Claude Code..."` system prompt prefix.
 
 - macOS on Apple Silicon (Alpine arm64 + Fusion arm64 VM)
 - VMware Fusion 13+
-- `xorriso`, `coreutils`, `python3` — `brew install xorriso coreutils python@3`
+- `xorriso`, `coreutils`, `python3`, `socat` — `brew install xorriso coreutils python@3 socat`
+  (socat is required for `make tui` — puts the host terminal in raw mode so keys + colors work)
 - An SSH keypair at `~/.ssh/id_ed25519` (or `id_rsa`, or `id_ecdsa`)
 - A Claude Code OAuth token. Get one with `claude setup-token` on any host
   with Claude Code installed. Token starts with `sk-ant-oat01-`.
@@ -76,8 +77,25 @@ CDN). After it reboots into the installed system, boots are ~5-10 seconds.
 ## Talking to it
 
 ```bash
-make console                  # connects to the brain via /tmp/shedos.serial
+make tui                      # full TUI (themes, tabs, markdown, animated tools)
+make console                  # raw serial pipe (nc -U) — for debugging only;
+                              # ttyS0 hosts the Textual TUI which needs a PTY,
+                              # so use `make tui` for the real interface
+make ssh                      # ssh into the VM (best for shell access)
 ```
+
+The TUI is built with [Textual](https://textual.textualize.io) (full-screen
+modern Python TUI framework — installed in the guest via pip during install
+since it's not packaged for Alpine 3.23). Features:
+
+- 6 builtin themes (Ctrl-K cycles; `/theme nord|dracula|tokyo-night|gruvbox|solarized-dark|monokai`)
+- Cards with rounded borders, padding, and themed backgrounds (you / claude / tool / error all visually distinct)
+- Markdown widget renders Claude's responses with syntax-highlighted code blocks, tables, lists
+- Tabbed conversations (`Ctrl-T` new, `Ctrl-W` close, `Ctrl-N`/`Ctrl-P` cycle)
+- Per-tab scrollable chat history (auto-loaded on startup from `/var/lib/shedos/sessions/`)
+- Tool calls show a yellow card with command + args, then turn green (success) or red (failure) with the output
+- Header + Footer with key-binding hints
+- Slash commands: `/help`, `/new`, `/close`, `/next`, `/prev`, `/theme`, `/title`, `/quit`
 
 ```
 > what's my IP?

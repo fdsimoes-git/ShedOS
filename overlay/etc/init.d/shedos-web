@@ -1,0 +1,20 @@
+#!/sbin/openrc-run
+
+# ShedOS web GUI server. Bridges Chromium app-mode frontend to the
+# brain daemon's RPC socket. Listens on 127.0.0.1:8080.
+
+name="shedos-web"
+description="ShedOS web GUI server (HTTP + WebSocket on 127.0.0.1:8080)"
+command="/usr/bin/python3"
+command_args="/opt/shedos/web_server.py"
+command_background="yes"
+pidfile="/run/shedos-web.pid"
+output_log="/var/log/shedos-web.log"
+error_log="/var/log/shedos-web.log"
+respawn_delay=2
+supervisor="supervise-daemon"
+
+depend() {
+    need net
+    after shedos-brain
+}
