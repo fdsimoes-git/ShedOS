@@ -45,8 +45,11 @@ class BrainClient:
     async def connect(self):
         for _ in range(60):
             try:
+                # 16MiB limit so big sessions.history responses (long
+                # conversations serialize the full message list as ONE
+                # JSON line) don't trip readline's default 64KB cap.
                 self.reader, self.writer = await asyncio.open_unix_connection(
-                    self.sock_path
+                    self.sock_path, limit=16 * 1024 * 1024
                 )
                 return
             except (FileNotFoundError, ConnectionRefusedError):
