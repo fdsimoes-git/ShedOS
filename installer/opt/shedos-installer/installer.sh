@@ -180,16 +180,42 @@ apply_overlay() {
     say "overlay applied. files written:"
     find "$MNT/opt/shedos" "$MNT/etc/shedos" "$MNT/etc/init.d/shedos-brain" 2>&1 | head -20 || true
 
-    # Source wizard env (wizard.py writes /tmp/shedos-wizard.env before
-    # exec'ing this script). Empty/missing means use the built-in defaults.
+    # Parse wizard choices from /tmp/shedos-wizard.env.
+    # We deliberately do NOT `.` (source) the file: /tmp is world-writable
+    # on many setups, and sourcing arbitrary content as root would let a
+    # tampered file run shell commands. Instead we read line-by-line and
+    # only accept a fixed key/value vocabulary with strict regex
+    # validation. TOKEN_OVERRIDE comes via the process environment from
+    # wizard.py's os.execv (so it bypasses /tmp entirely) — we just
+    # honour what's already set.
     : "${TOKEN_OVERRIDE:=}"
     PERSONA_NAME="default"
     STYLE_TERSE=1
     STYLE_FORMAL=0
     STYLE_EMOJIS=0
     if [ -f /tmp/shedos-wizard.env ]; then
-        say "applying wizard choices from /tmp/shedos-wizard.env"
-        . /tmp/shedos-wizard.env
+        say "parsing wizard choices from /tmp/shedos-wizard.env"
+        while IFS='=' read -r key val; do
+            # Strip surrounding single quotes from the value (the wizard
+            # writes PERSONA_NAME='default' style).
+            val="${val#\'}"
+            val="${val%\'}"
+            case "$key" in
+                PERSONA_NAME)
+                    case "$val" in
+                        default|coding|sysadmin|researcher)
+                            PERSONA_NAME="$val" ;;
+                        *)  say "  ignoring unknown PERSONA_NAME=$val" ;;
+                    esac ;;
+                STYLE_TERSE|STYLE_FORMAL|STYLE_EMOJIS)
+                    case "$val" in
+                        0|1) eval "$key=$val" ;;
+                        *)   say "  ignoring non-boolean $key=$val" ;;
+                    esac ;;
+                ''|\#*) ;;   # blanks + comments
+                *)   ;;       # silently drop unrecognised keys
+            esac
+        done < /tmp/shedos-wizard.env
     else
         say "no wizard env — using built-in defaults (persona=default, terse)"
     fi

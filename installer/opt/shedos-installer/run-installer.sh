@@ -40,16 +40,19 @@ done
 
 apk update >/dev/null 2>&1 || true
 
-# Step 1: install everything in /etc/apk/world. The world file lists
-# python3, py3-rich, py3-pip, open-vm-tools, xorg-server, xinit, xterm,
-# eudev, etc. If this fails we still try the rich-only fallback path.
+# Step 1: install everything in /etc/apk/world. We read the package
+# names from the world file directly (filtering blank lines + comments)
+# so the runtime install list can't drift from what the apkovl declares.
 echo "  installing apk packages (python3, X11, open-vm-tools, fonts)..."
-if ! apk add --no-progress --quiet \
-        python3 py3-rich py3-pip open-vm-tools \
-        xorg-server xinit xterm openbox \
-        xf86-video-fbdev xf86-input-libinput libinput-udev \
-        eudev eudev-openrc open-vm-tools-gtk \
-        font-jetbrains-mono font-dejavu; then
+WORLD_PKGS=$(grep -vE '^[[:space:]]*(#|$)' /etc/apk/world | tr '\n' ' ')
+if [ -z "$WORLD_PKGS" ]; then
+    echo "[run-installer] /etc/apk/world is empty or missing — can't install"
+    echo "[run-installer] wizard dependencies. Falling back to installer.sh."
+    sleep 3
+    exec /opt/shedos-installer/installer.sh
+fi
+# shellcheck disable=SC2086  # intentional word-splitting on WORLD_PKGS
+if ! apk add --no-progress --quiet $WORLD_PKGS; then
     echo
     echo "[run-installer] apk add failed — no python3 available, can't"
     echo "[run-installer] run the wizard. Falling back to non-interactive"

@@ -242,17 +242,34 @@ async def handle_settings_put(request):
     if not isinstance(body, dict):
         return web.json_response(
             {"error": "request body must be a JSON object"}, status=400)
-    style_in = body.get("style")
-    persona_in = body.get("persona")
+
+    # Validate every provided field BEFORE writing anything, so a bad
+    # `persona` doesn't half-apply alongside a good `style` (which would
+    # leave the system in an inconsistent state and still return 400).
+    style_in = body.get("style", None)
+    persona_in = body.get("persona", None)
+    if "style" in body and not isinstance(style_in, dict):
+        return web.json_response(
+            {"error": "`style` must be an object"}, status=400)
+    if "persona" in body and not isinstance(persona_in, str):
+        return web.json_response(
+            {"error": "`persona` must be a string"}, status=400)
+    if isinstance(persona_in, str) and persona_in not in config.PERSONA_PRESETS:
+        return web.json_response(
+            {"error": f"unknown persona preset: {persona_in!r}"},
+            status=400)
+    if not isinstance(style_in, dict) and not isinstance(persona_in, str):
+        return web.json_response(
+            {"error": "no recognised field; expected `style` or `persona`"},
+            status=400)
+
+    # All inputs valid — apply.
     out = {}
     if isinstance(style_in, dict):
         out["style"] = config.save_style(style_in)
     if isinstance(persona_in, str):
-        try:
-            config.save_persona_choice(persona_in)
-            out["persona"] = config.load_persona_choice()
-        except ValueError as e:
-            return web.json_response({"error": str(e)}, status=400)
+        config.save_persona_choice(persona_in)
+        out["persona"] = config.load_persona_choice()
     return web.json_response(out)
 
 
