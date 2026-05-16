@@ -17,8 +17,9 @@ WM_PID=$!
 # Cmd+V in the Fusion window pastes into Chromium. Provided by
 # open-vm-tools-gtk; needs vmtoolsd already running (OpenRC default
 # runlevel handles that).
-( command -v vmware-user-suid-wrapper >/dev/null \
-    && /usr/bin/vmware-user-suid-wrapper & ) || true
+if command -v vmware-user-suid-wrapper >/dev/null; then
+    vmware-user-suid-wrapper &
+fi
 
 # Hide cursor when idle (nice touch)
 ( command -v unclutter >/dev/null && unclutter -idle 2 -root & ) || true

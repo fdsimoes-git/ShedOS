@@ -12,7 +12,19 @@ PERSONA_PATH = "/etc/shedos/persona.txt"
 PERSONA_CHOICE_PATH = "/etc/shedos/persona-choice"
 PERSONAS_DIR = "/etc/shedos/personas"
 STYLE_PATH = "/etc/shedos/style.json"
+VERSION_PATH = "/etc/shedos/version"
 HISTORY_DIR = "/var/lib/shedos"
+
+
+def shedos_version():
+    """Read the ShedOS release string written by build.sh from
+    config/version. Falls back to 'unknown' if the file is missing
+    (e.g. running the brain outside a real install)."""
+    try:
+        with open(VERSION_PATH, "r") as f:
+            return f.read().strip() or "unknown"
+    except OSError:
+        return "unknown"
 HISTORY_DIR_MODE = 0o700
 HISTORY_FILE_MODE = 0o600
 # Cap on how many prior messages from the persisted history we replay

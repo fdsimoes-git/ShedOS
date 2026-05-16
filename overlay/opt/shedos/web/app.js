@@ -709,6 +709,10 @@
   // focus on close (a11y: keyboard users shouldn't be dropped at the
   // top of the document after closing a dialog).
   let _previouslyFocused = null;
+  // Tracks whether the keydown trap is currently attached, so calling
+  // openSettings() while the modal is already open doesn't stack
+  // duplicate listeners (which closeSettings would only remove one of).
+  let _trapAttached = false;
 
   function _focusableInModal() {
     return els.settingsModal.querySelectorAll(
@@ -741,17 +745,27 @@
       _settingsLoaded = true;
     }
     loadSettings().catch(e => addError(`settings: ${e.message}`));
-    // Move focus into the dialog and start the tab trap.
+    // Move focus into the dialog and start the tab trap. Guard the RAF
+    // callback against the modal being closed before the next frame
+    // (would otherwise focus a hidden element and attach an unused
+    // listener), and guard the listener attach against duplicates.
     requestAnimationFrame(() => {
+      if (els.settingsModal.hidden) return;
       const first = _focusableInModal()[0];
       if (first) first.focus();
-      els.settingsModal.addEventListener("keydown", _trapTab);
+      if (!_trapAttached) {
+        els.settingsModal.addEventListener("keydown", _trapTab);
+        _trapAttached = true;
+      }
     });
   }
 
   function closeSettings() {
     els.settingsModal.hidden = true;
-    els.settingsModal.removeEventListener("keydown", _trapTab);
+    if (_trapAttached) {
+      els.settingsModal.removeEventListener("keydown", _trapTab);
+      _trapAttached = false;
+    }
     if (_previouslyFocused && typeof _previouslyFocused.focus === "function") {
       _previouslyFocused.focus();
     }

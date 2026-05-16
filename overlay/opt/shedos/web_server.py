@@ -33,7 +33,10 @@ RENDER_DIR = "/var/lib/shedos/render"
 BRAIN_SOCK = "/run/shedos-brain.sock"
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 8080
-SHEDOS_VERSION = "0.5.0"
+# Single source of truth for the ShedOS version lives in
+# /etc/shedos/version (written by build.sh from config/version) so we
+# can't drift between the wizard's banner and the Settings UI's display.
+SHEDOS_VERSION = config.shedos_version()
 
 
 class BrainClient:

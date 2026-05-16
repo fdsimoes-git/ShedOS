@@ -21,6 +21,7 @@ cd "$HERE"
 ALPINE_VERSION="$(tr -d '[:space:]' < config/alpine-release)"
 ARCH="$(tr -d '[:space:]' < config/arch)"
 ALPINE_MAJOR="${ALPINE_VERSION%.*}"
+SHEDOS_VERSION="$(tr -d '[:space:]' < config/version)"
 ISO_NAME="alpine-virt-${ALPINE_VERSION}-${ARCH}.iso"
 ISO_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MAJOR}/releases/${ARCH}/${ISO_NAME}"
 
@@ -93,6 +94,13 @@ chmod 0755 "$OVERLAY_STAGE/opt/shedos/brain.py" 2>/dev/null || true
 chmod 0755 "$OVERLAY_STAGE/opt/shedos/web_server.py" 2>/dev/null || true
 chmod 0755 "$OVERLAY_STAGE/opt/shedos/bootstrap_token.py" 2>/dev/null || true
 
+# Single source of truth for the ShedOS version (config/version) is
+# propagated to /etc/shedos/version on both the live ISO and the target.
+# config.py + wizard.py read from there at runtime so we don't have to
+# edit two Python files when bumping the release.
+mkdir -p "$OVERLAY_STAGE/etc/shedos"
+printf '%s\n' "$SHEDOS_VERSION" > "$OVERLAY_STAGE/etc/shedos/version"
+
 # Pack the target overlay into a tarball for the installer to extract.
 # Include `root` so files like /root/.xinitrc make it onto the target.
 TARGET_TARBALL="$WORK/overlay.tar.gz"
@@ -121,7 +129,11 @@ cp config/target-packages.list "$INSTALLER_STAGE/opt/shedos-installer/packages.l
 cat > "$INSTALLER_STAGE/opt/shedos-installer/version.env" <<EOF
 ALPINE_VERSION="${ALPINE_MAJOR}"
 ARCH="${ARCH}"
+SHEDOS_VERSION="${SHEDOS_VERSION}"
 EOF
+# Also drop the version where the wizard expects it at runtime.
+mkdir -p "$INSTALLER_STAGE/etc/shedos"
+printf '%s\n' "$SHEDOS_VERSION" > "$INSTALLER_STAGE/etc/shedos/version"
 
 # Generate the installer's /etc/apk/repositories from the same pinned
 # version (was a hardcoded v3.23 file before).

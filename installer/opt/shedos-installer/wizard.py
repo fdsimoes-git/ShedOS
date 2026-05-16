@@ -32,6 +32,21 @@ import sys
 
 WIZARD_ENV = "/tmp/shedos-wizard.env"
 INSTALLER = "/opt/shedos-installer/installer.sh"
+VERSION_PATH = "/etc/shedos/version"
+
+
+def _shedos_version():
+    """Single source of truth: /etc/shedos/version (written by build.sh
+    from config/version). Falls back so a hand-run wizard.py still
+    works for local testing."""
+    try:
+        with open(VERSION_PATH, "r") as f:
+            return f.read().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+SHEDOS_VERSION = _shedos_version()
 
 PERSONA_PRESETS = [
     ("default",    "Default",
@@ -255,7 +270,7 @@ def _make_app():
         ]
 
         def compose(self) -> ComposeResult:
-            yield Static("ShedOS Setup Utility — v0.5.0",
+            yield Static(f"ShedOS Setup Utility — v{SHEDOS_VERSION}",
                           id="title-bar")
             with TabbedContent(initial="welcome", id="tabs"):
                 with TabPane(PANES[0][1], id="welcome"):
