@@ -58,10 +58,13 @@ font-noto
 font-dejavu
 
 # VMware Fusion guest tools (clipboard, time sync, graceful shutdown).
-# On arm64 Fusion the vmci channel is sometimes flaky, but it works
-# well enough for clipboard pastes into terminals and is harmless if
-# the host doesn't support it.
+# `open-vm-tools` provides the core daemon (vmtoolsd) for time sync /
+# graceful shutdown. `open-vm-tools-gtk` provides `vmware-user` which
+# bridges the host clipboard into X's CLIPBOARD selection — without it,
+# Cmd+V in the Fusion window does nothing in the installed Chromium GUI.
+# The X session script (overlay/root/.xinitrc) launches vmware-user.
 open-vm-tools
+open-vm-tools-gtk
 
 # Convenience
 htop

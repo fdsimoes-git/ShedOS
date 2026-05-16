@@ -96,8 +96,11 @@ def _read_text(path):
 
 def load_persona_choice():
     """Name of the active preset, or 'custom' when /etc/shedos/persona.txt
-    exists and overrides everything. Falls back to 'default'."""
-    if os.path.exists(PERSONA_PATH):
+    contains non-whitespace text. Checking existence alone would lie:
+    `load_persona()` ignores empty persona.txt and falls through to the
+    chosen preset, so the API would otherwise report active='custom'
+    while the brain is using a preset."""
+    if _read_text(PERSONA_PATH):
         return "custom"
     name = _read_text(PERSONA_CHOICE_PATH)
     if name in PERSONA_PRESETS:

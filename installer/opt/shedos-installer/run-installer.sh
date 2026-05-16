@@ -12,9 +12,16 @@
 # character OAuth token by hand is awful UX. The X session adds ~100MB
 # of apk downloads on first boot but the install is one-shot.
 #
-# If anything in the X path fails (no network, package issue), we fall
-# back to running the wizard directly on the framebuffer console — same
-# UI, just without paste support.
+# Failure handling:
+#   - apk add itself fails (no network, missing package): we have no
+#     python3, so we can't run the wizard at all. Skip straight to
+#     installer.sh which uses baked-in defaults (default persona, terse
+#     style, ISO-baked token if any). Telling the user this in the
+#     console output before exec.
+#   - X-only pieces fail (Xorg / openbox / xterm): apk succeeded, so
+#     python3 + textual / rich exist. Fall back to running the wizard
+#     directly on the framebuffer console — same UI, just without
+#     host-clipboard paste.
 
 clear 2>/dev/null
 cat <<'EOF'
@@ -44,8 +51,11 @@ if ! apk add --no-progress --quiet \
         eudev eudev-openrc open-vm-tools-gtk \
         font-jetbrains-mono font-dejavu; then
     echo
-    echo "[run-installer] apk add failed. Falling back to non-interactive"
-    echo "[run-installer] installer.sh with built-in defaults."
+    echo "[run-installer] apk add failed — no python3 available, can't"
+    echo "[run-installer] run the wizard. Falling back to non-interactive"
+    echo "[run-installer] installer.sh with built-in defaults"
+    echo "[run-installer]   (default persona, terse style,"
+    echo "[run-installer]    ISO-baked token if any, no token override)"
     sleep 3
     exec /opt/shedos-installer/installer.sh
 fi

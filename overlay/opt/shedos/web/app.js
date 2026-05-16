@@ -682,11 +682,19 @@
       emojis: $("#style-emojis").checked,
     };
     try {
-      await fetch("/api/settings", {
+      const r = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ style }),
       });
+      if (!r.ok) {
+        // Surface server-side validation errors instead of silently
+        // claiming the save succeeded. The endpoint returns
+        // {error: "..."} with status 400 on bad input.
+        let detail = `${r.status}`;
+        try { const j = await r.json(); if (j.error) detail = j.error; } catch {}
+        throw new Error(detail);
+      }
     } catch (e) {
       addError(`save style: ${e.message}`);
     }
@@ -697,7 +705,32 @@
     _styleSaveTimer = setTimeout(saveStyle, 250);
   }
 
+  // Element that had focus before the modal opened, so we can restore
+  // focus on close (a11y: keyboard users shouldn't be dropped at the
+  // top of the document after closing a dialog).
+  let _previouslyFocused = null;
+
+  function _focusableInModal() {
+    return els.settingsModal.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+  }
+
+  function _trapTab(e) {
+    if (e.key !== "Tab") return;
+    const items = _focusableInModal();
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault(); first.focus();
+    }
+  }
+
   function openSettings() {
+    _previouslyFocused = document.activeElement;
     els.settingsModal.hidden = false;
     if (!_settingsLoaded) {
       renderThemeGrid(document.documentElement.getAttribute("data-theme")
@@ -708,10 +741,21 @@
       _settingsLoaded = true;
     }
     loadSettings().catch(e => addError(`settings: ${e.message}`));
+    // Move focus into the dialog and start the tab trap.
+    requestAnimationFrame(() => {
+      const first = _focusableInModal()[0];
+      if (first) first.focus();
+      els.settingsModal.addEventListener("keydown", _trapTab);
+    });
   }
 
   function closeSettings() {
     els.settingsModal.hidden = true;
+    els.settingsModal.removeEventListener("keydown", _trapTab);
+    if (_previouslyFocused && typeof _previouslyFocused.focus === "function") {
+      _previouslyFocused.focus();
+    }
+    _previouslyFocused = null;
   }
 
   els.settingsBtn.addEventListener("click", openSettings);

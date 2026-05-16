@@ -8,10 +8,13 @@
 #   - Fusion host -> guest clipboard works (vmware-user bridges the host
 #     clipboard into X's CLIPBOARD selection, which xterm consumes)
 #
-# We don't run a window manager — a single fullscreen xterm covers the
-# whole screen. After the wizard exec's installer.sh, the install logs
-# stream into the same xterm. installer.sh issues `reboot` at the end,
-# which kills X and reboots into the installed system.
+# We run a minimal window manager (openbox) only because xterm's
+# -fullscreen flag uses _NET_WM_STATE_FULLSCREEN, which needs an
+# EWMH-compliant WM to honour the hint. xterm itself fills the screen;
+# openbox just sits there processing window-state requests. After the
+# wizard exec's installer.sh, the install logs stream into the same
+# xterm. installer.sh issues `reboot` at the end, which kills X and
+# reboots into the installed system.
 
 # vmware-user-suid-wrapper handles the clipboard channel + drag-and-drop.
 # Open-vm-tools-gtk installs it; vmtoolsd should already be running.

@@ -210,10 +210,15 @@ async def handle_settings_get(request):
         host = socket.gethostname()
     except Exception:
         host = "shedos"
+    # `available` lists what PUT /api/settings will accept for the
+    # `persona` field. "custom" is intentionally excluded — to use a
+    # custom persona the user writes /etc/shedos/persona.txt directly
+    # (via SSH); it's surfaced in `active` so the UI can show that the
+    # current persona came from that file, not from a preset choice.
     return web.json_response({
         "persona": {
             "active": persona_choice,
-            "available": list(config.PERSONA_PRESETS) + ["custom"],
+            "available": list(config.PERSONA_PRESETS),
             "text": persona_text,
         },
         "style": style,
@@ -226,7 +231,14 @@ async def handle_settings_get(request):
 
 
 async def handle_settings_put(request):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, web.HTTPBadRequest):
+        return web.json_response(
+            {"error": "request body is not valid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400)
     style_in = body.get("style")
     persona_in = body.get("persona")
     out = {}
@@ -237,8 +249,7 @@ async def handle_settings_put(request):
             config.save_persona_choice(persona_in)
             out["persona"] = config.load_persona_choice()
         except ValueError as e:
-            return web.json_response(
-                {"error": str(e)}, status=400)
+            return web.json_response({"error": str(e)}, status=400)
     return web.json_response(out)
 
 
