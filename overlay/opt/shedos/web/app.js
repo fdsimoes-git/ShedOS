@@ -660,7 +660,7 @@
 
   async function loadSettings() {
     const data = await apiGet("/api/settings");
-    $("#persona-name").textContent = data.persona.active;
+    populatePersonaSelect(data.persona.active, data.persona.available);
     $("#persona-text").textContent = data.persona.text;
     $("#style-terse").checked  = !!data.style.terse;
     $("#style-formal").checked = !!data.style.formal;
@@ -673,6 +673,53 @@
       const arr = sess.sessions || sess;
       $("#sys-sessions").textContent = String(arr.length || 0);
     } catch { /* ignore */ }
+  }
+
+  function populatePersonaSelect(active, available) {
+    const sel = $("#persona-select");
+    if (!sel) return;
+    sel.innerHTML = "";
+    // available is the preset list from the backend (no "custom" — that's
+    // set out-of-band by writing /etc/shedos/persona.txt, never via PUT).
+    const presets = Array.isArray(available) ? available : [];
+    presets.forEach(name => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      if (name === active) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    // If active is "custom" (or anything else outside the preset list),
+    // surface it as a disabled option so the dropdown still reflects
+    // the truth without letting the user "switch" to it.
+    if (active && !presets.includes(active)) {
+      const opt = document.createElement("option");
+      opt.value = active;
+      opt.textContent = `${active} (set via /etc/shedos/persona.txt)`;
+      opt.selected = true;
+      opt.disabled = true;
+      sel.insertBefore(opt, sel.firstChild);
+    }
+  }
+
+  async function savePersona(name) {
+    try {
+      const r = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ persona: name }),
+      });
+      if (!r.ok) {
+        let detail = `${r.status}`;
+        try { const j = await r.json(); if (j.error) detail = j.error; } catch {}
+        throw new Error(detail);
+      }
+      // Refresh the persona text panel to reflect the new active persona.
+      const data = await apiGet("/api/settings");
+      $("#persona-text").textContent = data.persona.text;
+    } catch (e) {
+      addError(`switch persona: ${e.message}`);
+    }
   }
 
   async function saveStyle() {
@@ -715,8 +762,13 @@
   let _trapAttached = false;
 
   function _focusableInModal() {
+    // <summary> is natively focusable but not matched by a generic
+    // tabindex/select/button selector — without it Tab can escape the
+    // dialog when focus is on the persona expander. <details> elements
+    // get their focus on the inner <summary>.
     return els.settingsModal.querySelectorAll(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      'button, [href], input, select, textarea, summary,' +
+      ' [tabindex]:not([tabindex="-1"])'
     );
   }
 
@@ -741,6 +793,9 @@
                        || "tokyo-night");
       ["style-terse", "style-formal", "style-emojis"].forEach(id => {
         $("#" + id).addEventListener("change", debouncedSaveStyle);
+      });
+      $("#persona-select").addEventListener("change", (e) => {
+        savePersona(e.target.value);
       });
       _settingsLoaded = true;
     }

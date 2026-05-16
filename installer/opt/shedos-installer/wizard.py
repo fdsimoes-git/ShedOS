@@ -9,7 +9,9 @@ what a fresh user sees in the VMware Fusion window. Collects:
 
 Writes /tmp/shedos-wizard.env, then execs installer.sh which sources the
 env and applies the choices during apply_overlay. The token override is
-passed via process environment only (never written to disk in cleartext).
+passed via the process environment (never written to /tmp/shedos-wizard.env)
+and lands on the *target* disk at /etc/shedos/token (mode 0600) — i.e.
+its intended destination — but never on the live ISO's tmpfs.
 
 This module exposes two implementations:
   - WizardApp (Textual) — full-screen modern TUI, used when textual is

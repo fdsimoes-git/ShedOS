@@ -41,17 +41,19 @@
         <section class="settings-section">
           <h3>Persona</h3>
           <div class="kv-row">
-            <span class="k">Active</span>
-            <span class="v" id="persona-name">—</span>
+            <label class="k" for="persona-select">Active</label>
+            <select id="persona-select" class="v"></select>
           </div>
           <details class="persona-detail">
             <summary>Show persona text</summary>
             <pre class="persona-text" id="persona-text"></pre>
           </details>
-          <p class="hint">Personas are chosen during install and can be
-            re-applied with <code>shedos-set-persona &lt;name&gt;</code> in
-            an SSH session. Live in-GUI editing is planned for a future
-            release.</p>
+          <p class="hint">Switching here calls
+            <code>PUT /api/settings</code> and takes effect on your next
+            message (no daemon restart). For a fully custom persona,
+            write your own text to <code>/etc/shedos/persona.txt</code>
+            via SSH — when present it overrides the preset choice and
+            shows up here as <code>custom</code>.</p>
         </section>
 
         <section class="settings-section">
