@@ -32,10 +32,16 @@ guest (VM)
    Persistence under /var/lib/shedos/
      ├─ sessions/<uuid>.jsonl     append-only chat history (1 file per chat tab)
      ├─ sessions/<uuid>.updated   sidecar timestamp (avoids rewriting meta line)
-     └─ render/<asset>/<file>     staged images/PDFs/HTML for render_* tools
+     ├─ render/<asset>/<file>     staged images/PDFs/HTML for render_* tools
+     └─ render-tabs.json          manifest of open render tabs (v0.6.0)
+                                  — GUI re-populates the tab bar from this
+                                  on page refresh; closing a tab DELETEs
+                                  the entry + wipes the asset dir.
 ```
 
 The brain re-reads `/etc/shedos/persona.txt`, `/etc/shedos/persona-choice`, and `/etc/shedos/style.json` on **every turn**, so the in-GUI Settings panel can flip persona/style without restarting the daemon.
+
+Render tools (`render_image` / `render_pdf` / `render_web` / `render_markdown` / `render_code` / `render_json` in `tools.py`) all return a `{render: {id, type, url, title}}` envelope that the GUI uses to open a tab. The markdown/code/json variants render to a self-contained HTML page under `/var/lib/shedos/render/<id>/index.html` (sandboxed iframe, no scripts) using `py3-markdown` and `py3-pygments`.
 
 ## Common commands
 

@@ -27,6 +27,7 @@ from aiohttp import WSMsgType, web
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
+import tools
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 RENDER_DIR = "/var/lib/shedos/render"
@@ -284,6 +285,18 @@ async def handle_settings_put(request):
     return web.json_response(out)
 
 
+async def handle_render_tabs_list(request):
+    """Returns the persisted render-tab manifest so the GUI can re-populate
+    the tab bar after a page refresh / reconnect."""
+    return web.json_response(tools._load_manifest())
+
+
+async def handle_render_tabs_delete(request):
+    asset_id = request.match_info["asset_id"]
+    removed = tools.remove_render_asset(asset_id)
+    return web.json_response({"deleted": removed, "id": asset_id})
+
+
 async def handle_ws(request):
     """WebSocket: bidirectional event stream.
 
@@ -340,6 +353,9 @@ def make_app():
     app.router.add_put("/api/sessions/{sid}/title", handle_sessions_title)
     app.router.add_get("/api/settings", handle_settings_get)
     app.router.add_put("/api/settings", handle_settings_put)
+    app.router.add_get("/api/render-tabs", handle_render_tabs_list)
+    app.router.add_delete("/api/render-tabs/{asset_id}",
+                           handle_render_tabs_delete)
     app.router.add_get("/ws", handle_ws)
     if os.path.isdir(WEB_DIR):
         app.router.add_static("/static", WEB_DIR)

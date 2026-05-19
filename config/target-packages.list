@@ -29,6 +29,10 @@ curl
 # Brain runtime
 python3
 py3-httpx
+# v0.6.0: render_markdown + render_code tools (Pygments handles syntax
+# highlighting, Markdown handles md -> html). Both pure-Python, tiny.
+py3-markdown
+py3-pygments
 
 # TUI runtime (v0.3.0+, fallback for serial/ssh access)
 py3-prompt_toolkit

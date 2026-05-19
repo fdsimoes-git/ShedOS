@@ -102,7 +102,16 @@
 
   // ---------- Tabs ------------------------------------------------------
 
-  const TAB_ICONS = { chat: "◉", image: "🖼", pdf: "📄", web: "🌐" };
+  const TAB_ICONS = {
+    chat: "◉", image: "🖼", pdf: "📄", web: "🌐",
+    markdown: "📝", code: "💻", json: "{ }",
+  };
+
+  // Render-tab types that are static HTML pages (rendered server-side
+  // under /var/lib/shedos/render/<id>/index.html). They get the same
+  // sandboxed-iframe layout as `web` but with no allow-scripts since
+  // the content is our own pre-rendered HTML.
+  const HTML_RENDER_TYPES = new Set(["markdown", "code", "json"]);
 
   function renderTabsBar() {
     els.tabsBar.innerHTML = "";
@@ -237,6 +246,20 @@
       frame.setAttribute("sandbox",
         "allow-scripts allow-same-origin allow-popups allow-forms");
       renderViewport.appendChild(frame);
+
+    } else if (HTML_RENDER_TYPES.has(tab.type)) {
+      // markdown / code / json render to a self-contained HTML file by
+      // the backend (tools.py:_stage_rendered_html). Same iframe layout
+      // as `web` but a stricter sandbox — no allow-scripts since our
+      // server-rendered HTML doesn't need them.
+      const icon = TAB_ICONS[tab.type] || "📄";
+      renderViewport.appendChild(buildControls(
+        `${icon} ${tab.title || tab.type}`, []));
+      const frame = document.createElement("iframe");
+      frame.className = "render-frame";
+      frame.src = safeUrl;
+      frame.setAttribute("sandbox", "allow-same-origin");
+      renderViewport.appendChild(frame);
     }
     els.main.appendChild(renderViewport);
     els.main.classList.add("render-mode");
@@ -364,21 +387,36 @@
 
   // ---------- Tab management --------------------------------------------
 
-  function addRenderTab(render) {
+  function addRenderTab(render, { focus = true } = {}) {
     const id = `render-${render.id}`;
     if (tabs.find(t => t.id === id)) {
       // Tab already exists → just focus it
-      switchTo(id);
+      if (focus) switchTo(id);
       return;
     }
     tabs.push({
       id,
+      assetId: render.id,
       type: render.type,
       title: render.title || render.type,
       url: render.url,
     });
     renderTabsBar();
-    switchTo(id);
+    if (focus) switchTo(id);
+  }
+
+  async function restoreRenderTabs() {
+    // v0.6.0: render tabs are persisted server-side at
+    // /var/lib/shedos/render-tabs.json — re-populate the bar after a
+    // page refresh / reconnect so the user doesn't have to re-render.
+    try {
+      const data = await apiGet("/api/render-tabs");
+      const list = Array.isArray(data.tabs) ? data.tabs : [];
+      list.forEach(entry => addRenderTab(entry, { focus: false }));
+    } catch (e) {
+      // Non-fatal: chat still works, just no render tabs restored.
+      addError(`restore render tabs: ${e.message}`);
+    }
   }
 
   function closeTab(id) {
@@ -392,6 +430,11 @@
     if (t.type === "chat") {
       // delete the brain session too
       apiDelete(`/api/sessions/${t.sessionId}`).catch(() => {});
+    } else if (t.assetId) {
+      // Render tab: also drop the server-side manifest entry + the
+      // asset directory so it doesn't reappear after a refresh and
+      // doesn't accumulate on disk forever.
+      apiDelete(`/api/render-tabs/${t.assetId}`).catch(() => {});
     }
     tabs = tabs.filter(t => t.id !== id);
     if (currentTabId === id) {
@@ -885,6 +928,8 @@
     } else {
       switchTo(tabs[0].id);
     }
+    // Restore any render tabs the brain opened in a previous session.
+    await restoreRenderTabs();
     connectWS();
   })().catch(e => {
     addError(`init: ${e.message}`);
