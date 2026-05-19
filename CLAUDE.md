@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ShedOS is an Alpine-Linux–based custom OS for VMware Fusion arm64 (Apple Silicon) where Claude Opus is the **only** user-facing process. The system installs to a persistent disk via a one-shot ISO, then on every boot the user interacts with Claude through:
 
 - **`tty1` (Fusion window)** — Chromium in app/kiosk mode showing a SPA chat GUI with tabs, markdown rendering, and "render tabs" for images / PDFs / web pages
-- **`ttyS0` (Unix-socket pipe `/tmp/shedos.serial`)** — Textual TUI fallback, reachable via `make tui` from the host
-- **SSH** — same Textual TUI, reachable via `make ssh`
+- **`ttyS0` (Unix-socket pipe `/tmp/shedos.serial`)** — `shedos-chat.py` minimal chat client (v0.7.0+, replaces the Textual TUI), reachable via `make tui` from the host
+- **SSH** — same chat client (`/opt/shedos/shedos-chat.py`), reachable via `make ssh` followed by running it from the shell
 
 All three frontends talk to a single multi-session brain daemon over `/run/shedos-brain.sock` (JSON-RPC, one Session per chat tab, append-only JSONL persistence).
 
@@ -23,8 +23,9 @@ host (Mac, VMware Fusion)
 
 guest (VM)
    tty1  ──→ run-gui.sh ──→ startx → openbox → chromium --kiosk --app=http://127.0.0.1:8080/
-   ttyS0 ──→ run-tui.sh ──→ Textual TUI (modern terminal client)
-   sshd  ──→ same Textual TUI, key-only auth (no passwords)
+   ttyS0 ──→ run-chat.sh ──→ shedos-chat.py (rich-only stdin/stdout)
+   sshd  ──→ root shell; run `/opt/shedos/shedos-chat.py` to chat,
+            or `make tui` from the Mac (over the serial pipe)
 
    shedos-brain  (daemon)        ─── /run/shedos-brain.sock ─── all clients
    shedos-web    (aiohttp)       ─── 127.0.0.1:8080  HTTP + WS bridge for the GUI
@@ -55,8 +56,8 @@ export CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat01-...'
 
 make iso          # builds out/shedos-installer.iso (+ creates 16 GB system VMDK if missing)
 make run          # build + boot the VM in Fusion (auto-installs on first boot via wizard)
-make tui          # connect to the Textual TUI over the serial socket (needs `brew install socat`)
-make console      # raw `nc -U` serial pipe — debug-only; ttyS0 hosts the TUI which needs a PTY
+make tui          # connect to the chat client over the serial socket (needs `brew install socat`)
+make console      # raw `nc -U` serial pipe — debug-only; ttyS0 hosts the chat client which needs a PTY
 make ssh          # ssh root@<vm-ip> using ~/.ssh/id_ed25519
 make ip           # vmrun getGuestIPAddress
 make wipe-system  # delete the 16 GB system VMDK; next boot reinstalls
@@ -131,7 +132,7 @@ shedos/
 ├── config/               pinned alpine version (3.23.0), arch (aarch64), target-packages.list
 ├── overlay/              what gets installed on the target system
 │   ├── etc/
-│   │   ├── inittab                  tty1 → run-gui.sh, ttyS0 → run-tui.sh
+│   │   ├── inittab                  tty1 → run-gui.sh, ttyS0 → run-chat.sh
 │   │   ├── init.d/{shedos-brain,shedos-web}   OpenRC services
 │   │   ├── shedos/personas/         persona presets (default, coding, sysadmin, researcher)
 │   │   └── shedos/style.json        conversation style flags
@@ -143,10 +144,11 @@ shedos/
 │   │   ├── tools.py                 bash, apk, read/write_file, render_*
 │   │   ├── anthropic_client.py      OAuth httpx client (Bearer + beta header)
 │   │   ├── config.py                token/persona/style loaders + composers
-│   │   ├── tui/                     Textual TUI (RpcClient + cards + themes)
+│   │   ├── brain_client.py          sync RPC client (used by shedos-chat.py)
+│   │   ├── shedos-chat.py           v0.7.0 minimal stdin/stdout chat client
 │   │   ├── web/                     SPA frontend (index.html + app.js + style.css)
 │   │   ├── run-gui.sh               startx + openbox + chromium loop
-│   │   └── run-tui.sh               Textual launcher with pip-install fallback
+│   │   └── run-chat.sh              chat-client launcher (deps wait + token bootstrap)
 │   └── root/.xinitrc                openbox + chromium respawn loop
 ├── installer/            apkovl baked into the live installer ISO
 │   ├── etc/inittab                  tty1 → wizard.py, ttyS0 → debug getty

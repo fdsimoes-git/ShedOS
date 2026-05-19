@@ -39,10 +39,10 @@ tui:
 	fi
 	@command -v socat >/dev/null 2>&1 || { \
 		echo "socat not installed — run: brew install socat"; \
-		echo "(socat puts your terminal into raw mode so the TUI's keys + colors work)"; \
+		echo "(socat puts your terminal into raw mode so the chat client's keys + colors work)"; \
 		exit 1; \
 	}
-	@echo "Connecting to ShedOS TUI. Press Ctrl-]  Ctrl-C to quit."
+	@echo "Connecting to ShedOS chat. Press Ctrl-]  Ctrl-C to quit."
 	@socat -,rawer,escape=0x1d UNIX-CONNECT:$(SOCKET)
 
 console:
@@ -50,7 +50,7 @@ console:
 		echo "$(SOCKET) doesn't exist yet — start the VM with 'make run' first."; \
 		exit 1; \
 	fi
-	@echo "Raw serial console (ttyS0 runs the Textual TUI — for the proper"
+	@echo "Raw serial console (ttyS0 runs the chat client — for the proper"
 	@echo "client use 'make tui' which sets up a PTY via socat). Ctrl-C to quit."
 	@nc -U $(SOCKET)
 
