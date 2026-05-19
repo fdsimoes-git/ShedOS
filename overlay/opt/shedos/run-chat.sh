@@ -1,6 +1,7 @@
 #!/bin/sh
-# Launched by busybox getty on ttyS0 (see /etc/inittab) and intended to
-# be run by SSH users as `shedos-chat` (a symlink to this file).
+# Launched by busybox getty on ttyS0 (see /etc/inittab) and exposed to
+# SSH users as `shedos-chat` via the /usr/local/bin/shedos-chat symlink
+# (see overlay/usr/local/bin/shedos-chat -> run-chat.sh).
 #
 # Sequence:
 #   1. wait for python3 + py3-rich (apk may still be running on first boot)

@@ -48,6 +48,8 @@ Asset IDs are `sha1(seed)[:12]`. They're **content-addressed** — same seed →
 
 Note for upgrades from pre-v0.6.0 installs: the asset-id format changed (used to mix `time.time()` into the seed), so pre-v0.6.0 directories under `/var/lib/shedos/render/` are orphaned and will never be re-referenced. `rm -rf /var/lib/shedos/render/*` after upgrading is safe — any open render tabs will just get recreated on the next render_* call.
 
+Upgrades from pre-v0.7.0 also leave two unused files behind: `/var/lib/shedos/theme` (was the Textual TUI's persisted theme name) and `/var/lib/shedos/prompt-history.txt` (was prompt_toolkit's input history). The new `shedos-chat.py` reads neither — safe to `rm`.
+
 ## Common commands
 
 ```bash

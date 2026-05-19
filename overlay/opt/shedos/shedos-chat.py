@@ -18,12 +18,12 @@ Slash commands:
   /list              list sessions, most-recent first
   /switch <n|id>     switch to session by index from /list or by id
   /title <text>      rename current session
+  /delete <n|id>     delete a session (if it was active, switches away)
   /clear             clear screen
   /quit              (or Ctrl-D)
 """
 import os
 import sys
-import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from brain_client import RpcClient, RpcError
@@ -56,23 +56,29 @@ def header(title):
         out(bar)
 
 
-def render_assistant_chunk(text):
-    """Render an assistant text chunk. Uses rich's Markdown when the
-    chunk looks like markdown (has headers, lists, code blocks, etc.),
-    otherwise treats as plain text so partial chunks don't break."""
+def render_assistant_text(text):
+    """Render the full assistant message buffered for one turn. Streaming-
+    markdown is awkward (the per-chunk heuristic fires on prose like
+    'in-flight - test' and mixes block-renders mid-stream), so we buffer
+    all `assistant_text` chunks for the turn and render once at
+    `end_turn` — either as rendered Markdown when there's any
+    block-level structure, or plain text otherwise."""
     if not text:
         return
     if _console is None:
         out(text)
         return
-    has_md = any(
-        marker in text
-        for marker in ("```", "**", "## ", "# ", "- ", "* ")
+    # Block-level markers only. Inline emphasis like a stray `*foo*`
+    # in prose stays plain — avoids surprise rendering of casual chat.
+    has_block_md = (
+        "```" in text
+        or any(text.startswith(p) or f"\n{p}" in text
+               for p in ("# ", "## ", "### ", "- ", "* ", "> ", "1. "))
     )
-    if has_md:
-        _console.print(Markdown(text), end="")
+    if has_block_md:
+        _console.print(Markdown(text))
     else:
-        _console.print(text, end="", style="default")
+        _console.print(text)
 
 
 def render_tool_use(name, summary):
@@ -88,6 +94,12 @@ def render_tool_use(name, summary):
 
 
 def render_tool_result(output, ok):
+    if output is None:
+        # Some tools (process_kill on a successful signal, etc.) return
+        # `None` or an empty result. Print a quiet placeholder rather
+        # than the literal "→ None".
+        out("  → ok" if ok else "  ✗ (no output)", style="dim")
+        return
     if _console is None:
         out(f"  → {output}" if ok else f"  ✗ {output}")
         return
@@ -152,6 +164,7 @@ def _print_help():
     out("  /list              list sessions, most-recent first")
     out("  /switch <n|id>     switch by index from /list or by id")
     out("  /title <text>      rename current session")
+    out("  /delete <n|id>     delete a session (switches away if active)")
     out("  /clear             clear screen")
     out("  /quit              exit (Ctrl-D also works)")
     out("")
@@ -213,6 +226,38 @@ def handle_slash(state, line):
             state.rpc.set_title(state.session_id, arg)
             state.session_title = arg
             out(f"  → renamed to {arg!r}", style="green")
+    elif cmd == "delete":
+        if not arg:
+            out("  usage: /delete <index from /list, or session id>",
+                style="red")
+        else:
+            target = None
+            if arg.isdigit() and state.last_listing:
+                idx = int(arg) - 1
+                if 0 <= idx < len(state.last_listing):
+                    target = state.last_listing[idx]
+            if target is None:
+                target = next(
+                    (s for s in state.rpc.list_sessions() if s["id"] == arg),
+                    None)
+            if target is None:
+                out(f"  no such session: {arg!r}  (try /list first)",
+                    style="red")
+            else:
+                tid = target["id"]
+                ttitle = target.get("title", "(untitled)")
+                state.rpc.delete_session(tid)
+                state.last_listing = [s for s in state.last_listing
+                                       if s["id"] != tid]
+                out(f"  → deleted {ttitle} ({tid})", style="green")
+                # If we just deleted the active session, fall back to
+                # the most-recent remaining one or create a fresh chat.
+                if tid == state.session_id:
+                    state.session_id = None
+                    state.session_title = None
+                    state.ensure_session()
+                    out(f"  → switched to: {state.session_title} "
+                        f"({state.session_id})", style="dim")
     else:
         out(f"  unknown command: /{cmd}  (try /help)", style="red")
     return True
@@ -250,13 +295,22 @@ def run():
             if not handle_slash(state, line):
                 return
             continue
-        # Stream the brain's response.
+        # Buffer assistant_text chunks across the turn so we render
+        # the full message once (with consistent markdown styling)
+        # instead of mid-stream per-chunk renders that mix block- and
+        # inline-level styles awkwardly.
+        text_buffer = []
         try:
             for event in rpc.send(state.session_id, line):
                 ev = event.get("event")
                 if ev == "assistant_text":
-                    render_assistant_chunk(event.get("chunk", ""))
+                    text_buffer.append(event.get("chunk", ""))
                 elif ev == "tool_use":
+                    # Flush any pending assistant text before the tool
+                    # call so the visual order matches the brain's flow.
+                    if text_buffer:
+                        render_assistant_text("".join(text_buffer))
+                        text_buffer = []
                     render_tool_use(event.get("name", "?"),
                                      event.get("input_summary", ""))
                 elif ev == "tool_result":
@@ -264,12 +318,22 @@ def run():
                     ok = not (isinstance(o, dict) and "error" in o)
                     render_tool_result(o, ok)
                 elif ev == "error":
+                    if text_buffer:
+                        render_assistant_text("".join(text_buffer))
+                        text_buffer = []
                     render_error(event.get("msg", "unknown"))
                 elif ev == "end_turn":
+                    if text_buffer:
+                        render_assistant_text("".join(text_buffer))
+                        text_buffer = []
                     out("")  # trailing newline after the turn
         except RpcError as e:
+            if text_buffer:
+                render_assistant_text("".join(text_buffer))
             render_error(str(e))
         except KeyboardInterrupt:
+            if text_buffer:
+                render_assistant_text("".join(text_buffer))
             out("\n^C  (turn interrupted; daemon may still finish)")
 
 
