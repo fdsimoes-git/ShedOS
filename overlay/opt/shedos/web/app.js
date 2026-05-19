@@ -163,15 +163,18 @@
     return "about:blank";
   }
 
-  // Stricter than safeRenderUrl: for markdown/code/json render tabs the
-  // backend always writes /render/<12-hex>/index.html. Anything else
-  // (a poisoned manifest, a logic bug) collapses to about:blank instead
-  // of being passed through as a same-origin iframe target.
-  function safeHtmlRenderUrl(raw) {
-    if (typeof raw !== "string") return "about:blank";
-    return /^\/render\/[0-9a-f]{12}\/index\.html$/.test(raw.trim())
-      ? raw.trim()
-      : "about:blank";
+  // For markdown/code/json render tabs the URL shape is fixed:
+  //   /render/<12-hex-asset-id>/index.html
+  // Rather than trying to *validate* an API-supplied URL string (which
+  // CodeQL doesn't recognise regex-based check as a sanitiser), we
+  // re-construct the URL from a separately-validated asset id. The
+  // regex match returns only the captured 12-hex prefix, so even a
+  // poisoned manifest can't smuggle anything else into the iframe src.
+  function htmlRenderUrlFromAssetId(rawAssetId) {
+    if (typeof rawAssetId !== "string") return null;
+    const m = rawAssetId.match(/^([0-9a-f]{12})$/);
+    if (!m) return null;
+    return "/render/" + m[1] + "/index.html";
   }
 
   function buildControls(titleText, extras = []) {
@@ -259,29 +262,35 @@
       renderViewport.appendChild(frame);
 
     } else if (HTML_RENDER_TYPES.has(tab.type)) {
-      // markdown / code / json render to a self-contained HTML file by
-      // the backend at /render/<asset_id>/index.html. Re-validate the
-      // URL against that exact shape — `safeRenderUrl` only checks the
-      // scheme, but for these tab types we know the only acceptable
-      // shape so the iframe can't be redirected to an external URL
-      // even if the manifest gets poisoned.
-      const htmlUrl = safeHtmlRenderUrl(tab.url);
+      // markdown / code / json render to a self-contained HTML file at
+      // /render/<asset_id>/index.html. The iframe src is constructed
+      // inline from the (separately validated) asset id — we never pass
+      // tab.url through, so a poisoned manifest can't redirect or XSS
+      // the iframe.
       const icon = TAB_ICONS[tab.type] || "📄";
       renderViewport.appendChild(buildControls(
         `${icon} ${tab.title || tab.type}`, []));
-      const frame = document.createElement("iframe");
-      frame.className = "render-frame";
-      frame.src = htmlUrl;
-      // Strictest sandbox we can run with markdown links still working:
-      //   - no allow-scripts (our HTML is static, no JS needed)
-      //   - no allow-same-origin (iframe gets an opaque origin, can't
-      //     touch the parent's storage / cookies)
-      //   - allow-popups + allow-popups-to-escape-sandbox so <a> links
-      //     in rendered markdown can open in new tabs without inheriting
-      //     the sandbox.
-      frame.setAttribute("sandbox",
-        "allow-popups allow-popups-to-escape-sandbox");
-      renderViewport.appendChild(frame);
+      const safeSrc = htmlRenderUrlFromAssetId(tab.assetId);
+      if (!safeSrc) {
+        const err = document.createElement("div");
+        err.className = "render-error";
+        err.textContent = "Render asset is missing or malformed.";
+        renderViewport.appendChild(err);
+      } else {
+        const frame = document.createElement("iframe");
+        frame.className = "render-frame";
+        frame.src = safeSrc;
+        // Strictest sandbox we can run with markdown links still working:
+        //   - no allow-scripts (our HTML is static, no JS needed)
+        //   - no allow-same-origin (iframe gets an opaque origin, can't
+        //     touch the parent's storage / cookies)
+        //   - allow-popups + allow-popups-to-escape-sandbox so <a> links
+        //     in rendered markdown can open in new tabs without inheriting
+        //     the sandbox.
+        frame.setAttribute("sandbox",
+          "allow-popups allow-popups-to-escape-sandbox");
+        renderViewport.appendChild(frame);
+      }
     }
     els.main.appendChild(renderViewport);
     els.main.classList.add("render-mode");
