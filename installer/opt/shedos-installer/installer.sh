@@ -180,14 +180,83 @@ apply_overlay() {
     say "overlay applied. files written:"
     find "$MNT/opt/shedos" "$MNT/etc/shedos" "$MNT/etc/init.d/shedos-brain" 2>&1 | head -20 || true
 
-    # Token + ssh key were baked into the installer apkovl by build.sh.
-    if [ -f /etc/shedos/token ]; then
+    # Parse wizard choices from /tmp/shedos-wizard.env.
+    # We deliberately do NOT `.` (source) the file: /tmp is world-writable
+    # on many setups, and sourcing arbitrary content as root would let a
+    # tampered file run shell commands. Instead we read line-by-line and
+    # only accept a fixed key/value vocabulary with strict regex
+    # validation. TOKEN_OVERRIDE comes via the process environment from
+    # wizard.py's os.execv (so it bypasses /tmp entirely) — we just
+    # honour what's already set.
+    : "${TOKEN_OVERRIDE:=}"
+    PERSONA_NAME="default"
+    STYLE_TERSE=1
+    STYLE_FORMAL=0
+    STYLE_EMOJIS=0
+    if [ -f /tmp/shedos-wizard.env ]; then
+        say "parsing wizard choices from /tmp/shedos-wizard.env"
+        while IFS='=' read -r key val; do
+            # Strip surrounding single quotes from the value (the wizard
+            # writes PERSONA_NAME='default' style).
+            val="${val#\'}"
+            val="${val%\'}"
+            case "$key" in
+                PERSONA_NAME)
+                    case "$val" in
+                        default|coding|sysadmin|researcher)
+                            PERSONA_NAME="$val" ;;
+                        *)  say "  ignoring unknown PERSONA_NAME=$val" ;;
+                    esac ;;
+                STYLE_TERSE)
+                    case "$val" in 0|1) STYLE_TERSE="$val" ;;
+                        *) say "  ignoring non-boolean STYLE_TERSE=$val" ;;
+                    esac ;;
+                STYLE_FORMAL)
+                    case "$val" in 0|1) STYLE_FORMAL="$val" ;;
+                        *) say "  ignoring non-boolean STYLE_FORMAL=$val" ;;
+                    esac ;;
+                STYLE_EMOJIS)
+                    case "$val" in 0|1) STYLE_EMOJIS="$val" ;;
+                        *) say "  ignoring non-boolean STYLE_EMOJIS=$val" ;;
+                    esac ;;
+                ''|\#*) ;;   # blanks + comments
+                *)   ;;       # silently drop unrecognised keys
+            esac
+        done < /tmp/shedos-wizard.env
+    else
+        say "no wizard env — using built-in defaults (persona=default, terse)"
+    fi
+
+    # Token: wizard override beats baked-in ISO token beats nothing.
+    /usr/bin/install -d -m 0700 "$MNT/etc/shedos"
+    if [ -n "$TOKEN_OVERRIDE" ]; then
+        say "writing wizard-supplied token to target"
+        printf '%s' "$TOKEN_OVERRIDE" > "$MNT/etc/shedos/token"
+        chmod 600 "$MNT/etc/shedos/token"
+    elif [ -f /etc/shedos/token ]; then
         say "copying token from installer -> target"
-        /usr/bin/install -d -m 0700 "$MNT/etc/shedos"
         /usr/bin/install -m 0600 /etc/shedos/token "$MNT/etc/shedos/token"
     else
-        say "no token on installer (first-boot will prompt)"
+        say "no token (wizard skipped + no ISO bake) — first-boot will prompt"
     fi
+
+    # Persona choice + style.json. The brain re-reads these on every turn
+    # so the settings UI can flip them at runtime.
+    say "writing persona-choice=$PERSONA_NAME"
+    printf '%s\n' "$PERSONA_NAME" > "$MNT/etc/shedos/persona-choice"
+    chmod 644 "$MNT/etc/shedos/persona-choice"
+
+    say "writing style.json (terse=$STYLE_TERSE formal=$STYLE_FORMAL emojis=$STYLE_EMOJIS)"
+    _bool() { [ "$1" = "1" ] && echo "true" || echo "false"; }
+    cat > "$MNT/etc/shedos/style.json" <<EOF
+{
+  "terse":  $(_bool "$STYLE_TERSE"),
+  "formal": $(_bool "$STYLE_FORMAL"),
+  "emojis": $(_bool "$STYLE_EMOJIS")
+}
+EOF
+    chmod 644 "$MNT/etc/shedos/style.json"
+
     if [ -f /root/.ssh/authorized_keys ]; then
         say "copying ssh authorized_keys -> target"
         /usr/bin/install -d -m 0700 "$MNT/root/.ssh"
@@ -241,7 +310,7 @@ say "enabling OpenRC services"
 for svc in devfs dmesg hwdrivers; do rc-update add $svc sysinit; done
 for svc in udev udev-trigger udev-settle; do rc-update add $svc sysinit 2>/dev/null || true; done
 for svc in hwclock modules sysctl hostname bootmisc syslog networking; do rc-update add $svc boot; done
-for svc in local sshd shedos-brain shedos-web; do rc-update add $svc default; done
+for svc in local sshd shedos-brain shedos-web vmtoolsd; do rc-update add $svc default 2>/dev/null || true; done
 for svc in mount-ro killprocs savecache; do rc-update add $svc shutdown; done
 
 say "generating SSH host keys"

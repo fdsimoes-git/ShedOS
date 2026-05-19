@@ -13,6 +13,8 @@
     input:       $("#input"),
     sendBtn:     $("#send-btn"),
     newTabBtn:   $("#new-tab-btn"),
+    settingsBtn: $("#settings-btn"),
+    settingsModal: $("#settings-modal"),
     status:      $("#status"),
     statusText:  $("#status-text"),
     hint:        $("#hint"),
@@ -593,6 +595,282 @@
     els.input.style.height = Math.min(els.input.scrollHeight, 240) + "px";
   }
   els.newTabBtn.addEventListener("click", newChatTab);
+
+  // ---------- Settings modal --------------------------------------------
+
+  const THEMES = [
+    { id: "tokyo-night",     name: "Tokyo Night",
+      strip: ["#1a1b26", "#7aa2f7", "#bb9af7", "#9ece6a"] },
+    { id: "dracula",         name: "Dracula",
+      strip: ["#282a36", "#bd93f9", "#ff79c6", "#50fa7b"] },
+    { id: "nord",            name: "Nord",
+      strip: ["#2e3440", "#88c0d0", "#b48ead", "#a3be8c"] },
+    { id: "gruvbox",         name: "Gruvbox",
+      strip: ["#282828", "#83a598", "#d3869b", "#b8bb26"] },
+    { id: "solarized-dark",  name: "Solarized Dark",
+      strip: ["#002b36", "#268bd2", "#6c71c4", "#859900"] },
+    { id: "monokai",         name: "Monokai",
+      strip: ["#272822", "#66d9ef", "#ae81ff", "#a6e22e"] },
+  ];
+
+  function applyTheme(id) {
+    document.documentElement.setAttribute("data-theme", id);
+    try { localStorage.setItem("shedos.theme", id); } catch {}
+  }
+
+  function loadSavedTheme() {
+    let saved = "tokyo-night";
+    try { saved = localStorage.getItem("shedos.theme") || saved; } catch {}
+    if (!THEMES.find(t => t.id === saved)) saved = "tokyo-night";
+    applyTheme(saved);
+    return saved;
+  }
+
+  function renderThemeGrid(activeId) {
+    const grid = $("#theme-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+    THEMES.forEach(t => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "theme-swatch" + (t.id === activeId ? " active" : "");
+      btn.dataset.themeId = t.id;
+      const strip = document.createElement("div");
+      strip.className = "swatch-strip";
+      t.strip.forEach(c => {
+        const cell = document.createElement("span");
+        cell.style.background = c;
+        strip.appendChild(cell);
+      });
+      const name = document.createElement("div");
+      name.className = "swatch-name";
+      name.textContent = t.name;
+      btn.appendChild(strip);
+      btn.appendChild(name);
+      btn.addEventListener("click", () => {
+        applyTheme(t.id);
+        renderThemeGrid(t.id);
+      });
+      grid.appendChild(btn);
+    });
+  }
+
+  let _settingsLoaded = false;
+  let _styleSaveTimer = null;
+
+  async function loadSettings() {
+    const data = await apiGet("/api/settings");
+    populatePersonaSelect(data.persona.active, data.persona.available);
+    $("#persona-text").textContent = data.persona.text;
+    $("#style-terse").checked  = !!data.style.terse;
+    $("#style-formal").checked = !!data.style.formal;
+    $("#style-emojis").checked = !!data.style.emojis;
+    $("#sys-version").textContent = data.system.version;
+    $("#sys-host").textContent    = data.system.hostname;
+    $("#sys-ip").textContent      = data.system.ip;
+    try {
+      const sess = await apiGet("/api/sessions");
+      const arr = sess.sessions || sess;
+      $("#sys-sessions").textContent = String(arr.length || 0);
+    } catch { /* ignore */ }
+  }
+
+  function populatePersonaSelect(active, available) {
+    const sel = $("#persona-select");
+    if (!sel) return;
+    sel.innerHTML = "";
+    // available is the preset list from the backend (no "custom" — that's
+    // set out-of-band by writing /etc/shedos/persona.txt, never via PUT).
+    const presets = Array.isArray(available) ? available : [];
+    presets.forEach(name => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      if (name === active) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    // If active is "custom" (or anything else outside the preset list),
+    // surface it as a disabled option so the dropdown still reflects
+    // the truth without letting the user "switch" to it.
+    if (active && !presets.includes(active)) {
+      const opt = document.createElement("option");
+      opt.value = active;
+      opt.textContent = `${active} (set via /etc/shedos/persona.txt)`;
+      opt.selected = true;
+      opt.disabled = true;
+      sel.insertBefore(opt, sel.firstChild);
+    }
+    // Snapshot the active value so savePersona() can revert to it if a
+    // PUT fails — the change event fires *after* the user picks, so
+    // we'd otherwise have no record of what was active before.
+    sel.dataset.previousValue = active || "";
+  }
+
+  // Monotonic id — every savePersona() call increments it and only the
+  // call whose id still matches _personaSaveLatest at await-completion
+  // may touch the UI. Prevents out-of-order PUT responses (from rapid
+  // dropdown changes) from overwriting state with stale data.
+  let _personaSaveLatest = 0;
+
+  async function savePersona(name) {
+    const sel = $("#persona-select");
+    const previous = sel ? sel.dataset.previousValue || sel.value : null;
+    const myId = ++_personaSaveLatest;
+    // Disable the dropdown for the in-flight window so the user can't
+    // pile up more requests faster than they resolve.
+    if (sel) sel.disabled = true;
+    const stillLatest = () => myId === _personaSaveLatest;
+    try {
+      const r = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ persona: name }),
+      });
+      if (!stillLatest()) return;  // a newer save started; drop this one
+      if (!r.ok) {
+        let detail = `${r.status}`;
+        try { const j = await r.json(); if (j.error) detail = j.error; } catch {}
+        throw new Error(detail);
+      }
+      const data = await apiGet("/api/settings");
+      if (!stillLatest()) return;
+      $("#persona-text").textContent = data.persona.text;
+      if (sel) sel.dataset.previousValue = data.persona.active;
+    } catch (e) {
+      if (!stillLatest()) return;
+      addError(`switch persona: ${e.message}`);
+      // Revert the dropdown to backend truth so the UI doesn't lie.
+      try {
+        const data = await apiGet("/api/settings");
+        if (!stillLatest()) return;
+        if (sel) {
+          sel.value = data.persona.active;
+          sel.dataset.previousValue = data.persona.active;
+        }
+      } catch {
+        if (sel && previous != null) sel.value = previous;
+      }
+    } finally {
+      // Always re-enable, even if a newer save raced past — that newer
+      // call's own finally will disable again as needed.
+      if (sel) sel.disabled = false;
+    }
+  }
+
+  async function saveStyle() {
+    const style = {
+      terse:  $("#style-terse").checked,
+      formal: $("#style-formal").checked,
+      emojis: $("#style-emojis").checked,
+    };
+    try {
+      const r = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ style }),
+      });
+      if (!r.ok) {
+        // Surface server-side validation errors instead of silently
+        // claiming the save succeeded. The endpoint returns
+        // {error: "..."} with status 400 on bad input.
+        let detail = `${r.status}`;
+        try { const j = await r.json(); if (j.error) detail = j.error; } catch {}
+        throw new Error(detail);
+      }
+    } catch (e) {
+      addError(`save style: ${e.message}`);
+    }
+  }
+
+  function debouncedSaveStyle() {
+    clearTimeout(_styleSaveTimer);
+    _styleSaveTimer = setTimeout(saveStyle, 250);
+  }
+
+  // Element that had focus before the modal opened, so we can restore
+  // focus on close (a11y: keyboard users shouldn't be dropped at the
+  // top of the document after closing a dialog).
+  let _previouslyFocused = null;
+  // Tracks whether the keydown trap is currently attached, so calling
+  // openSettings() while the modal is already open doesn't stack
+  // duplicate listeners (which closeSettings would only remove one of).
+  let _trapAttached = false;
+
+  function _focusableInModal() {
+    // <summary> is natively focusable but not matched by a generic
+    // tabindex/select/button selector — without it Tab can escape the
+    // dialog when focus is on the persona expander. <details> elements
+    // get their focus on the inner <summary>.
+    return els.settingsModal.querySelectorAll(
+      'button, [href], input, select, textarea, summary,' +
+      ' [tabindex]:not([tabindex="-1"])'
+    );
+  }
+
+  function _trapTab(e) {
+    if (e.key !== "Tab") return;
+    const items = _focusableInModal();
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault(); first.focus();
+    }
+  }
+
+  function openSettings() {
+    _previouslyFocused = document.activeElement;
+    els.settingsModal.hidden = false;
+    if (!_settingsLoaded) {
+      renderThemeGrid(document.documentElement.getAttribute("data-theme")
+                       || "tokyo-night");
+      ["style-terse", "style-formal", "style-emojis"].forEach(id => {
+        $("#" + id).addEventListener("change", debouncedSaveStyle);
+      });
+      $("#persona-select").addEventListener("change", (e) => {
+        savePersona(e.target.value);
+      });
+      _settingsLoaded = true;
+    }
+    loadSettings().catch(e => addError(`settings: ${e.message}`));
+    // Move focus into the dialog and start the tab trap. Guard the RAF
+    // callback against the modal being closed before the next frame
+    // (would otherwise focus a hidden element and attach an unused
+    // listener), and guard the listener attach against duplicates.
+    requestAnimationFrame(() => {
+      if (els.settingsModal.hidden) return;
+      const first = _focusableInModal()[0];
+      if (first) first.focus();
+      if (!_trapAttached) {
+        els.settingsModal.addEventListener("keydown", _trapTab);
+        _trapAttached = true;
+      }
+    });
+  }
+
+  function closeSettings() {
+    els.settingsModal.hidden = true;
+    if (_trapAttached) {
+      els.settingsModal.removeEventListener("keydown", _trapTab);
+      _trapAttached = false;
+    }
+    if (_previouslyFocused && typeof _previouslyFocused.focus === "function") {
+      _previouslyFocused.focus();
+    }
+    _previouslyFocused = null;
+  }
+
+  els.settingsBtn.addEventListener("click", openSettings);
+  els.settingsModal.addEventListener("click", (e) => {
+    if (e.target.dataset && e.target.dataset.close) closeSettings();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !els.settingsModal.hidden) closeSettings();
+  });
+
+  loadSavedTheme();
 
   els.hint.textContent = "Enter ↵ send · Shift+↵ newline · ⌘T new tab · ⌘W close tab";
 

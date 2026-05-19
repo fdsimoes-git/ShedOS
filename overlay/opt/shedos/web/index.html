@@ -14,11 +14,76 @@
       <span class="brand-name">ShedOS</span>
     </div>
     <nav class="tabs" id="tabs"></nav>
-    <button class="btn-icon" id="new-tab-btn" title="New tab (⌘T)">＋</button>
+    <button class="btn-icon" id="new-tab-btn"
+            title="New tab (⌘T)" aria-label="New chat tab">＋</button>
+    <button class="btn-icon" id="settings-btn"
+            title="Settings" aria-label="Open settings">⚙</button>
     <div class="status" id="status">
       <span class="dot"></span><span id="status-text">connecting…</span>
     </div>
   </header>
+
+  <div class="modal" id="settings-modal" hidden>
+    <div class="modal-backdrop" data-close="1"></div>
+    <div class="modal-card" role="dialog" aria-modal="true"
+         aria-labelledby="settings-title" tabindex="-1">
+      <header class="modal-header">
+        <h2 id="settings-title">Settings</h2>
+        <button class="btn-icon" id="settings-close" data-close="1"
+                title="Close" aria-label="Close settings">✕</button>
+      </header>
+      <div class="modal-body">
+        <section class="settings-section">
+          <h3>Theme</h3>
+          <div class="theme-grid" id="theme-grid"></div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Persona</h3>
+          <div class="kv-row">
+            <label class="k" for="persona-select">Active</label>
+            <select id="persona-select" class="v"></select>
+          </div>
+          <details class="persona-detail">
+            <summary>Show persona text</summary>
+            <pre class="persona-text" id="persona-text"></pre>
+          </details>
+          <p class="hint">Switching here calls
+            <code>PUT /api/settings</code> and takes effect on your next
+            message (no daemon restart). For a fully custom persona,
+            write your own text to <code>/etc/shedos/persona.txt</code>
+            via SSH — when present it overrides the preset choice and
+            shows up here as <code>custom</code>.</p>
+        </section>
+
+        <section class="settings-section">
+          <h3>Conversation style</h3>
+          <label class="toggle">
+            <input type="checkbox" id="style-terse">
+            <span>Terse — short, minimal narration</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="style-formal">
+            <span>Formal tone</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="style-emojis">
+            <span>Allow emojis</span>
+          </label>
+          <p class="hint">Style takes effect on the next message you send
+            — no restart needed.</p>
+        </section>
+
+        <section class="settings-section">
+          <h3>System</h3>
+          <div class="kv-row"><span class="k">Version</span><span class="v" id="sys-version">—</span></div>
+          <div class="kv-row"><span class="k">Hostname</span><span class="v" id="sys-host">—</span></div>
+          <div class="kv-row"><span class="k">IP</span><span class="v" id="sys-ip">—</span></div>
+          <div class="kv-row"><span class="k">Sessions</span><span class="v" id="sys-sessions">—</span></div>
+        </section>
+      </div>
+    </div>
+  </div>
 
   <main id="main">
     <section class="chat" id="chat" aria-live="polite"></section>

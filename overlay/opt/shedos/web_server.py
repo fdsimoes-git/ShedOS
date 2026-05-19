@@ -19,17 +19,24 @@ Endpoints:
 import asyncio
 import json
 import os
+import socket
 import sys
 
 from aiohttp import WSMsgType, web
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import config
+
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 RENDER_DIR = "/var/lib/shedos/render"
 BRAIN_SOCK = "/run/shedos-brain.sock"
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 8080
+# Single source of truth for the ShedOS version lives in
+# /etc/shedos/version (written by build.sh from config/version) so we
+# can't drift between the wizard's banner and the Settings UI's display.
+SHEDOS_VERSION = config.shedos_version()
 
 
 class BrainClient:
@@ -185,6 +192,98 @@ async def handle_sessions_title(request):
     return web.json_response(res)
 
 
+def _primary_ip():
+    """Best-effort: find the LAN IP without resolving DNS."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # connecting to a UDP socket doesn't actually send anything
+        s.connect(("10.255.255.255", 1))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+async def handle_settings_get(request):
+    persona_choice = config.load_persona_choice()
+    persona_text = config.load_persona()
+    style = config.load_style()
+    try:
+        host = socket.gethostname()
+    except Exception:
+        host = "shedos"
+    # `available` lists what PUT /api/settings will accept for the
+    # `persona` field. "custom" is intentionally excluded — to use a
+    # custom persona the user writes /etc/shedos/persona.txt directly
+    # (via SSH); it's surfaced in `active` so the UI can show that the
+    # current persona came from that file, not from a preset choice.
+    return web.json_response({
+        "persona": {
+            "active": persona_choice,
+            "available": list(config.PERSONA_PRESETS),
+            "text": persona_text,
+        },
+        "style": style,
+        "system": {
+            "version": SHEDOS_VERSION,
+            "hostname": host,
+            "ip": _primary_ip(),
+        },
+    })
+
+
+async def handle_settings_put(request):
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, web.HTTPBadRequest):
+        return web.json_response(
+            {"error": "request body is not valid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400)
+
+    # Validate every provided field BEFORE writing anything, so a bad
+    # `persona` doesn't half-apply alongside a good `style` (which would
+    # leave the system in an inconsistent state and still return 400).
+    style_in = body.get("style", None)
+    persona_in = body.get("persona", None)
+    if "style" in body and not isinstance(style_in, dict):
+        return web.json_response(
+            {"error": "`style` must be an object"}, status=400)
+    if "persona" in body and not isinstance(persona_in, str):
+        return web.json_response(
+            {"error": "`persona` must be a string"}, status=400)
+    if isinstance(persona_in, str) and persona_in not in config.PERSONA_PRESETS:
+        return web.json_response(
+            {"error": f"unknown persona preset: {persona_in!r}"},
+            status=400)
+    # Validate every style key + value up-front. save_style enforces the
+    # same rules, but doing it here lets us reject the whole request
+    # before any write happens (consistent with the persona check above).
+    if isinstance(style_in, dict):
+        for k, v in style_in.items():
+            if k not in config.DEFAULT_STYLE:
+                return web.json_response(
+                    {"error": f"unknown style key: {k!r}"}, status=400)
+            if config._coerce_style_bool(v) is None:
+                return web.json_response(
+                    {"error": f"style[{k!r}] must be boolean"}, status=400)
+    if not isinstance(style_in, dict) and not isinstance(persona_in, str):
+        return web.json_response(
+            {"error": "no recognised field; expected `style` or `persona`"},
+            status=400)
+
+    # All inputs valid — apply.
+    out = {}
+    if isinstance(style_in, dict):
+        out["style"] = config.save_style(style_in)
+    if isinstance(persona_in, str):
+        config.save_persona_choice(persona_in)
+        out["persona"] = config.load_persona_choice()
+    return web.json_response(out)
+
+
 async def handle_ws(request):
     """WebSocket: bidirectional event stream.
 
@@ -239,6 +338,8 @@ def make_app():
     app.router.add_delete("/api/sessions/{sid}", handle_sessions_delete)
     app.router.add_get("/api/sessions/{sid}/messages", handle_sessions_history)
     app.router.add_put("/api/sessions/{sid}/title", handle_sessions_title)
+    app.router.add_get("/api/settings", handle_settings_get)
+    app.router.add_put("/api/settings", handle_settings_put)
     app.router.add_get("/ws", handle_ws)
     if os.path.isdir(WEB_DIR):
         app.router.add_static("/static", WEB_DIR)
