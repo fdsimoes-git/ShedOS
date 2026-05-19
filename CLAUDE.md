@@ -43,6 +43,10 @@ The brain re-reads `/etc/shedos/persona.txt`, `/etc/shedos/persona-choice`, and 
 
 Render tools (`render_image` / `render_pdf` / `render_web` / `render_markdown` / `render_code` / `render_json` in `tools.py`) all return a `{render: {id, type, url, title}}` envelope that the GUI uses to open a tab. The markdown/code/json variants render to a self-contained HTML page under `/var/lib/shedos/render/<id>/index.html` (sandboxed iframe, no scripts) using `py3-markdown` and `py3-pygments`.
 
+Asset IDs are `sha1(seed)[:12]`. They're **content-addressed** — same seed → same id → manifest dedupes + asset dir overwrites. Consequence: `render_web` on a brain-supplied URL **persists** the URL in `render-tabs.json` and replays it on every page refresh until the user closes that tab. That's a single-user-trusted property, but worth keeping in mind if the threat model ever loosens.
+
+Note for upgrades from pre-v0.6.0 installs: the asset-id format changed (used to mix `time.time()` into the seed), so pre-v0.6.0 directories under `/var/lib/shedos/render/` are orphaned and will never be re-referenced. `rm -rf /var/lib/shedos/render/*` after upgrading is safe — any open render tabs will just get recreated on the next render_* call.
+
 ## Common commands
 
 ```bash

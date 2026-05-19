@@ -288,7 +288,7 @@ async def handle_settings_put(request):
 async def handle_render_tabs_list(request):
     """Returns the persisted render-tab manifest so the GUI can re-populate
     the tab bar after a page refresh / reconnect."""
-    return web.json_response(tools._load_manifest())
+    return web.json_response(tools.list_render_tabs())
 
 
 async def handle_render_tabs_delete(request):

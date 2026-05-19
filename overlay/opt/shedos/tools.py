@@ -361,6 +361,13 @@ def _validate_asset_id(asset_id):
         raise ValueError(f"invalid asset_id: {asset_id!r}")
 
 
+def list_render_tabs():
+    """Public accessor for the manifest. web_server.py imports this for
+    `GET /api/render-tabs` so the cross-module contract is explicit
+    rather than relying on the underscore-prefixed _load_manifest()."""
+    return _load_manifest()
+
+
 def remove_render_asset(asset_id):
     """Drop the manifest entry AND wipe the asset dir. Called by
     web_server.py's DELETE /api/render-tabs/{id} when the user closes a
@@ -508,7 +515,12 @@ def tool_render_code(text, language=None, title=None):
     if not isinstance(text, str):
         return {"error": "render_code.text must be a string"}
     title = title or (f"{language} snippet" if language else "code")
-    body = None
+    # Broader except: any failure in the pygments pipeline (ImportError
+    # if the package is missing, ClassNotFound on exotic input,
+    # AttributeError on a broken install, etc.) falls back to plain
+    # <pre><code>. Without this an unexpected pygments error would
+    # propagate to dispatch() and surface as a raw {"error": ...} tool
+    # result instead of a rendered tab.
     try:
         from pygments import highlight as _pyg_highlight
         from pygments.formatters import HtmlFormatter
@@ -523,7 +535,7 @@ def tool_render_code(text, language=None, title=None):
         formatter = HtmlFormatter(noclasses=True, style="monokai",
                                    nowrap=False)
         body = _pyg_highlight(text, lexer, formatter)
-    except ImportError:
+    except Exception:
         body = f"<pre><code>{_html.escape(text)}</code></pre>"
     page = _render_page_html(title, body, mono=True)
     asset_id = _new_asset_id(f"code:{language or ''}:{text}")
