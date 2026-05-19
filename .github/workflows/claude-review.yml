@@ -25,7 +25,10 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Use the Claude Code OAuth token (same flow as the local CLI's
+          # `claude setup-token`). Avoids provisioning a separate pay-as-you-
+          # go API key — usage goes against your Claude subscription.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Review this pull request. Read CLAUDE.md and
             .github/CODE_REVIEW.md if present and follow their standards.
