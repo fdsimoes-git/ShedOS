@@ -207,10 +207,17 @@ apply_overlay() {
                             PERSONA_NAME="$val" ;;
                         *)  say "  ignoring unknown PERSONA_NAME=$val" ;;
                     esac ;;
-                STYLE_TERSE|STYLE_FORMAL|STYLE_EMOJIS)
-                    case "$val" in
-                        0|1) eval "$key=$val" ;;
-                        *)   say "  ignoring non-boolean $key=$val" ;;
+                STYLE_TERSE)
+                    case "$val" in 0|1) STYLE_TERSE="$val" ;;
+                        *) say "  ignoring non-boolean STYLE_TERSE=$val" ;;
+                    esac ;;
+                STYLE_FORMAL)
+                    case "$val" in 0|1) STYLE_FORMAL="$val" ;;
+                        *) say "  ignoring non-boolean STYLE_FORMAL=$val" ;;
+                    esac ;;
+                STYLE_EMOJIS)
+                    case "$val" in 0|1) STYLE_EMOJIS="$val" ;;
+                        *) say "  ignoring non-boolean STYLE_EMOJIS=$val" ;;
                     esac ;;
                 ''|\#*) ;;   # blanks + comments
                 *)   ;;       # silently drop unrecognised keys

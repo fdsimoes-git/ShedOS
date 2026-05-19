@@ -700,9 +700,18 @@
       opt.disabled = true;
       sel.insertBefore(opt, sel.firstChild);
     }
+    // Snapshot the active value so savePersona() can revert to it if a
+    // PUT fails — the change event fires *after* the user picks, so
+    // we'd otherwise have no record of what was active before.
+    sel.dataset.previousValue = active || "";
   }
 
   async function savePersona(name) {
+    const sel = $("#persona-select");
+    // Snapshot the previous selection so we can revert on failure —
+    // otherwise the dropdown stays on the user's pick while the backend
+    // (and brain) keep using the old value, which is misleading.
+    const previous = sel ? sel.dataset.previousValue || sel.value : null;
     try {
       const r = await fetch("/api/settings", {
         method: "PUT",
@@ -714,11 +723,25 @@
         try { const j = await r.json(); if (j.error) detail = j.error; } catch {}
         throw new Error(detail);
       }
-      // Refresh the persona text panel to reflect the new active persona.
+      // Refresh the persona text panel to reflect the new active persona,
+      // and remember the now-committed value as the new baseline.
       const data = await apiGet("/api/settings");
       $("#persona-text").textContent = data.persona.text;
+      if (sel) sel.dataset.previousValue = data.persona.active;
     } catch (e) {
       addError(`switch persona: ${e.message}`);
+      // Revert the dropdown to the backend truth so the UI doesn't lie.
+      // Best-effort re-fetch in case the previous-value snapshot is also
+      // stale (e.g. another client changed it concurrently).
+      try {
+        const data = await apiGet("/api/settings");
+        if (sel) {
+          sel.value = data.persona.active;
+          sel.dataset.previousValue = data.persona.active;
+        }
+      } catch {
+        if (sel && previous != null) sel.value = previous;
+      }
     }
   }
 
