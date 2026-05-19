@@ -5,10 +5,10 @@
 ::wait:/sbin/openrc default
 
 # tty1 (Fusion framebuffer): X11 + Chromium app mode = ShedOS GUI.
-# ttyS0 (serial pipe to host): Textual TUI for `make tui` / SSH access.
+# ttyS0 (serial pipe to host): shedos-chat.py for `make tui` / SSH access.
 # Both talk to the same brain daemon over /run/shedos-brain.sock.
 tty1::respawn:/sbin/getty -n -l /opt/shedos/run-gui.sh -i 38400 tty1
-ttyS0::respawn:/sbin/getty -L -n -l /opt/shedos/run-tui.sh -i 115200 ttyS0 vt100
+ttyS0::respawn:/sbin/getty -L -n -l /opt/shedos/run-chat.sh -i 115200 ttyS0 vt100
 tty2::respawn:/sbin/getty 38400 tty2
 tty3::respawn:/sbin/getty 38400 tty3
 tty4::respawn:/sbin/getty 38400 tty4

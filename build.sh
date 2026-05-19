@@ -93,6 +93,7 @@ find "$OVERLAY_STAGE" -type f \
 chmod 0755 "$OVERLAY_STAGE/opt/shedos/brain.py" 2>/dev/null || true
 chmod 0755 "$OVERLAY_STAGE/opt/shedos/web_server.py" 2>/dev/null || true
 chmod 0755 "$OVERLAY_STAGE/opt/shedos/bootstrap_token.py" 2>/dev/null || true
+chmod 0755 "$OVERLAY_STAGE/opt/shedos/shedos-chat.py" 2>/dev/null || true
 
 # Single source of truth for the ShedOS version (config/version) is
 # propagated to /etc/shedos/version on both the live ISO and the target.
@@ -102,11 +103,14 @@ mkdir -p "$OVERLAY_STAGE/etc/shedos"
 printf '%s\n' "$SHEDOS_VERSION" > "$OVERLAY_STAGE/etc/shedos/version"
 
 # Pack the target overlay into a tarball for the installer to extract.
-# Include `root` so files like /root/.xinitrc make it onto the target.
+# Include `root` so files like /root/.xinitrc make it onto the target,
+# and `usr` so the /usr/local/bin/shedos-chat symlink (-> run-chat.sh)
+# lands where SSH PATH will find it.
 TARGET_TARBALL="$WORK/overlay.tar.gz"
 log "packing target overlay -> $TARGET_TARBALL"
 TAR_ROOTS="etc opt"
 [ -d "$OVERLAY_STAGE/root" ] && TAR_ROOTS="$TAR_ROOTS root"
+[ -d "$OVERLAY_STAGE/usr" ]  && TAR_ROOTS="$TAR_ROOTS usr"
 (cd "$OVERLAY_STAGE" && tar -czf "$TARGET_TARBALL" \
     --uid 0 --gid 0 --uname root --gname root \
     $TAR_ROOTS)

@@ -34,11 +34,10 @@ py3-httpx
 py3-markdown
 py3-pygments
 
-# TUI runtime (v0.3.0+, fallback for serial/ssh access)
-py3-prompt_toolkit
+# Chat client runtime (v0.7.0): shedos-chat.py on ttyS0 / SSH.
+# Was Textual + prompt_toolkit through v0.6.0; replaced with a 284-LOC
+# stdin/stdout client over brain_client.py that only needs `rich`.
 py3-rich
-# pip needed to install textual (not packaged for Alpine 3.23)
-py3-pip
 
 # Web bridge (v0.4.0): aiohttp serves the GUI's HTTP + WebSocket
 py3-aiohttp
