@@ -7,6 +7,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.parse
 
@@ -218,7 +219,13 @@ def _is_url(s):
 
 
 def _new_asset_id(seed=""):
-    h = hashlib.sha1(f"{seed}{time.time()}".encode("utf-8")).hexdigest()
+    # Content-addressed: same seed -> same id. This is the contract the
+    # de-dupe in _add_to_manifest relies on; the previous version mixed
+    # time.time() into the hash, which defeated dedupe and let the
+    # manifest + asset dir grow unboundedly on repeated render_* calls.
+    # Callers MUST pass a seed unique-per-distinct-content (e.g.
+    # render_markdown passes "md:" + the WHOLE text, not a prefix).
+    h = hashlib.sha1(str(seed).encode("utf-8")).hexdigest()
     return h[:12]
 
 
@@ -284,6 +291,14 @@ def _download_to_render(url, default_name, ext_hint=""):
 # and page refreshes. Each entry mirrors the {type, id, url, title} envelope
 # the GUI uses to open a tab; the GUI reads the manifest on load and re-
 # populates the tab bar from it.
+#
+# Tool calls run on a worker thread via asyncio.to_thread (see brain.py),
+# so two concurrent render_* invocations could otherwise interleave their
+# load -> mutate -> save and lose an entry. The lock makes the read-
+# modify-write atomic across threads in the brain process. (It doesn't
+# protect against a separate process editing the file, but nothing does.)
+_MANIFEST_LOCK = threading.Lock()
+
 
 def _load_manifest():
     try:
@@ -315,18 +330,22 @@ def _save_manifest(manifest):
 
 
 def _add_to_manifest(asset_id, rtype, title, url):
-    m = _load_manifest()
-    # De-dupe by asset_id (same id implies same content under our hash) —
-    # without this, repeated render_web on the same URL would pile up.
-    m["tabs"] = [t for t in m["tabs"] if t.get("id") != asset_id]
-    m["tabs"].append({
-        "id": asset_id,
-        "type": rtype,
-        "title": title,
-        "url": url,
-        "created_at": int(time.time()),
-    })
-    _save_manifest(m)
+    with _MANIFEST_LOCK:
+        m = _load_manifest()
+        # De-dupe by asset_id (same id implies same content under our
+        # content-addressed hash) — without this, repeated render_web
+        # on the same URL would pile up. Relies on _new_asset_id being
+        # deterministic per-seed; re-introducing a nonce there would
+        # silently break dedupe.
+        m["tabs"] = [t for t in m["tabs"] if t.get("id") != asset_id]
+        m["tabs"].append({
+            "id": asset_id,
+            "type": rtype,
+            "title": title,
+            "url": url,
+            "created_at": int(time.time()),
+        })
+        _save_manifest(m)
 
 
 _ASSET_ID_RE = _re.compile(r'^[0-9a-f]{12}$')
@@ -347,10 +366,11 @@ def remove_render_asset(asset_id):
     web_server.py's DELETE /api/render-tabs/{id} when the user closes a
     render tab in the GUI."""
     _validate_asset_id(asset_id)
-    m = _load_manifest()
-    before = len(m["tabs"])
-    m["tabs"] = [t for t in m["tabs"] if t.get("id") != asset_id]
-    _save_manifest(m)
+    with _MANIFEST_LOCK:
+        m = _load_manifest()
+        before = len(m["tabs"])
+        m["tabs"] = [t for t in m["tabs"] if t.get("id") != asset_id]
+        _save_manifest(m)
     dest_dir = os.path.join(RENDER_DIR, asset_id)
     if os.path.isdir(dest_dir):
         shutil.rmtree(dest_dir, ignore_errors=True)
@@ -437,12 +457,23 @@ def _render_page_html(title, body_html, mono=False):
 
 def _stage_rendered_html(asset_id, html_content):
     """Write a self-contained HTML page to /var/lib/shedos/render/<id>/
-    index.html. Returns the URL."""
+    index.html. Atomic via mkstemp + os.replace so a brain crash mid-
+    write doesn't leave a half-written page in a permanent location
+    (matches the pattern config.save_*() and _save_manifest() use)."""
     dest_dir = os.path.join(RENDER_DIR, asset_id)
     os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, "index.html")
-    with open(dest, "w", encoding="utf-8") as f:
-        f.write(html_content)
+    fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=".index-", suffix=".html")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
     return f"/render/{asset_id}/index.html"
 
 
@@ -455,8 +486,20 @@ def tool_render_markdown(text, title="markdown"):
             text, extensions=["fenced_code", "tables", "nl2br"])
     except ImportError:
         body = f"<pre>{_html.escape(text)}</pre>"
+    # python-markdown passes raw HTML through by default, including
+    # <script>/<style>. The render iframe's sandbox blocks script
+    # execution and gives the iframe an opaque origin (no parent-state
+    # access) — so this is contained today, but if the sandbox is ever
+    # loosened to `allow-scripts` we'd have an XSS vector via prompt-
+    # injected markdown. Defense-in-depth: strip the tag pairs most
+    # likely to bite.
+    body = _re.sub(
+        r"<\s*(script|style)\b[^>]*>.*?<\s*/\s*\1\s*>",
+        "", body, flags=_re.IGNORECASE | _re.DOTALL)
+    body = _re.sub(r"<\s*(script|style)\b[^>]*/?\s*>",
+                    "", body, flags=_re.IGNORECASE)
     page = _render_page_html(title or "markdown", body, mono=False)
-    asset_id = _new_asset_id("md:" + text[:32])
+    asset_id = _new_asset_id("md:" + text)
     url = _stage_rendered_html(asset_id, page)
     return _render_response("markdown", asset_id, url, title or "markdown")
 
@@ -483,7 +526,7 @@ def tool_render_code(text, language=None, title=None):
     except ImportError:
         body = f"<pre><code>{_html.escape(text)}</code></pre>"
     page = _render_page_html(title, body, mono=True)
-    asset_id = _new_asset_id("code:" + text[:32])
+    asset_id = _new_asset_id(f"code:{language or ''}:{text}")
     url = _stage_rendered_html(asset_id, page)
     return _render_response("code", asset_id, url, title)
 
@@ -505,7 +548,7 @@ def tool_render_json(value, title="json"):
         return {"error": f"render_json: not serialisable: {e}"}
     body = f"<pre><code>{_html.escape(pretty)}</code></pre>"
     page = _render_page_html(title or "json", body, mono=True)
-    asset_id = _new_asset_id("json:" + pretty[:64])
+    asset_id = _new_asset_id("json:" + pretty)
     url = _stage_rendered_html(asset_id, page)
     return _render_response("json", asset_id, url, title or "json")
 
