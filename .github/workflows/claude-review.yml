@@ -21,10 +21,6 @@ jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Always run on pull_request events (opens / pushes — there's no
-    # comment body to filter on). For comment events, only run when the
-    # comment mentions @claude. The issue.pull_request check also skips
-    # issue_comment events on issues that aren't PRs.
     if: |
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' &&
@@ -38,37 +34,48 @@ jobs:
           fetch-depth: 0
 
       - uses: anthropics/claude-code-action@v1
+        env:
+          # Auth for the `gh pr comment` call Claude makes via the Bash
+          # tool. The action's own posting paths (use_sticky_comment,
+          # MCP inline-comment buffer) both completed `success` but
+          # posted nothing visible across multiple iterations — see
+          # PRs #8 / #9 / #10 — so we shell out to `gh` instead.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Use the Claude Code OAuth token (same flow as the local CLI's
-          # `claude setup-token`). Avoids provisioning a separate pay-as-you-
-          # go API key — usage goes against your Claude subscription.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Consolidate the entire review into one sticky top-level
-          # comment that updates in place on every push. Earlier
-          # iterations tried to wire up inline-comment posting via
-          # MCP tools but kept hitting permission_denials_count: 7
-          # because the action's tool allowlist doesn't include them
-          # by default and naming them in --allowedTools didn't help
-          # either. The sticky-comment path is documented and bypasses
-          # all that machinery.
-          use_sticky_comment: true
+          # Reveal Claude's tool calls in the run log. Without this the
+          # SDK hides everything and silent failures are invisible.
+          show_full_output: true
           prompt: |
-            Review this pull request. Read CLAUDE.md and
-            .github/CODE_REVIEW.md if present and follow their standards.
-            Focus on: correctness bugs, security issues, missing error
-            handling, missing tests, and breaking changes for callers.
-            Be specific and terse.
+            Review PR #${{ github.event.pull_request.number }} of
+            ${{ github.repository }}. Read CLAUDE.md and
+            .github/CODE_REVIEW.md if present and follow their
+            standards. Focus on: correctness bugs, security issues,
+            missing error handling, missing tests, and breaking
+            changes for callers. Be specific and terse.
 
-            Format your response as the review body — your reply IS
-            the comment the action will post (via use_sticky_comment).
-            Lead with either:
-              - "## Blocking issues" + a bulleted list with
-                `path:line` + the problem + the fix (one bullet per
-                issue), OR
-              - "No blocking issues." on its own line when there's
-                nothing worth blocking on.
-            Then a one-paragraph summary of what the PR does and any
-            non-blocking observations.
+            POST the review by running this exact command via the Bash
+            tool (no other path will reach the PR — the action's
+            built-in posting mechanism does not work for us):
+
+              cat <<'REVIEW_EOF' > /tmp/review.md
+              <YOUR MARKDOWN REVIEW HERE>
+              REVIEW_EOF
+              gh pr comment ${{ github.event.pull_request.number }} \
+                --body-file /tmp/review.md
+
+            Format the review body as either:
+              - "## Blocking issues" followed by a bulleted list:
+                `path:line` — the problem, the fix (one bullet per
+                issue, under 4 lines each), OR
+              - "No blocking issues." on its own line.
+            Then a one-paragraph summary of what the PR does plus
+            any non-blocking observations.
+
+            Always post the comment, even when there are no blocking
+            issues — silence is not acceptable; the PR author needs
+            to see that the review ran.
           claude_args: |
             --model claude-opus-4-7
             --max-turns 30
+            --allowedTools Read,Grep,Glob,Bash
