@@ -245,7 +245,21 @@ def _stage_local(source, default_name, ext_hint=""):
         raw_name += ext_hint
     name = _safe_filename(raw_name, default_name)
     dest = os.path.join(dest_dir, name)
-    shutil.copy2(source, dest)
+    # Atomic: copy to a sibling temp then rename. Without this, a re-
+    # render of the same source would overwrite `dest` in place while
+    # a Chromium iframe may still be loading the previous version,
+    # delivering a torn image/PDF.
+    fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=".stage-", suffix=".part")
+    os.close(fd)
+    try:
+        shutil.copy2(source, tmp)
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
     # URL-encode the path component so weird-but-safe names still work.
     quoted = urllib.parse.quote(name)
     return asset_id, f"/render/{asset_id}/{quoted}", name
@@ -262,26 +276,38 @@ def _download_to_render(url, default_name, ext_hint=""):
         raw_name += ext_hint
     name = _safe_filename(raw_name, default_name)
     dest = os.path.join(dest_dir, name)
+    # Same atomic-write reasoning as _stage_local: stream into a sibling
+    # temp, then os.replace once the download completes. If the download
+    # aborts (size cap exceeded, transport error) we never publish a
+    # half-written file at the final URL.
+    fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=".stage-", suffix=".part")
+    os.close(fd)
     try:
         with httpx.stream("GET", url, timeout=30, follow_redirects=True,
                           headers={"User-Agent": "Mozilla/5.0 ShedOS"}) as r:
             r.raise_for_status()
             total = 0
-            with open(dest, "wb") as f:
+            with open(tmp, "wb") as f:
                 for chunk in r.iter_bytes(chunk_size=64 * 1024):
                     total += len(chunk)
                     if total > MAX_RENDER_BYTES:
-                        f.close()
-                        try:
-                            os.unlink(dest)
-                        except OSError:
-                            pass
                         raise ValueError(
                             f"response exceeded {MAX_RENDER_BYTES} bytes; aborted"
                         )
                     f.write(chunk)
+        os.replace(tmp, dest)
     except httpx.HTTPError as e:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
         raise ValueError(f"download failed: {e}")
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
     quoted = urllib.parse.quote(name)
     return asset_id, f"/render/{asset_id}/{quoted}", name
 
@@ -306,9 +332,30 @@ def _load_manifest():
             data = _json.load(f)
         if isinstance(data, dict) and isinstance(data.get("tabs"), list):
             return data
-    except (FileNotFoundError, _json.JSONDecodeError, OSError):
-        pass
-    return {"tabs": []}
+        # Wrong shape (someone hand-edited it into something else):
+        # treat as corrupt, fall through to the rename-and-reset path.
+        raise ValueError("manifest top-level shape is not {tabs: [...]}")
+    except FileNotFoundError:
+        return {"tabs": []}
+    except (_json.JSONDecodeError, ValueError, OSError) as e:
+        # Corrupt or unreadable. Preserve the original as
+        # `<path>.corrupt.<timestamp>` before the next _save_manifest
+        # silently overwrites it with an empty manifest — the user
+        # can recover their tab list by hand from the backup if they
+        # care to.
+        try:
+            # time_ns() so two corruption events in the same second
+            # don't clobber the first backup.
+            backup = f"{RENDER_MANIFEST}.corrupt.{time.time_ns()}"
+            os.replace(RENDER_MANIFEST, backup)
+            import sys
+            sys.stderr.write(
+                f"[shedos] render manifest unreadable ({e}); "
+                f"preserved as {backup}, starting fresh\n"
+            )
+        except OSError:
+            pass
+        return {"tabs": []}
 
 
 def _save_manifest(manifest):
