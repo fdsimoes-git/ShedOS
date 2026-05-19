@@ -1,9 +1,13 @@
 import base64
 import hashlib
+import html as _html
+import json as _json
 import os
 import shutil
 import stat
 import subprocess
+import tempfile
+import threading
 import time
 import urllib.parse
 
@@ -13,6 +17,7 @@ MAX_STREAM = 16 * 1024
 MAX_FILE_READ = 64 * 1024
 MAX_FETCH_BODY = 256 * 1024
 RENDER_DIR = "/var/lib/shedos/render"
+RENDER_MANIFEST = "/var/lib/shedos/render-tabs.json"
 MAX_RENDER_BYTES = 50 * 1024 * 1024  # 50 MiB cap per render asset
 import re as _re
 
@@ -214,7 +219,13 @@ def _is_url(s):
 
 
 def _new_asset_id(seed=""):
-    h = hashlib.sha1(f"{seed}{time.time()}".encode("utf-8")).hexdigest()
+    # Content-addressed: same seed -> same id. This is the contract the
+    # de-dupe in _add_to_manifest relies on; the previous version mixed
+    # time.time() into the hash, which defeated dedupe and let the
+    # manifest + asset dir grow unboundedly on repeated render_* calls.
+    # Callers MUST pass a seed unique-per-distinct-content (e.g.
+    # render_markdown passes "md:" + the WHOLE text, not a prefix).
+    h = hashlib.sha1(str(seed).encode("utf-8")).hexdigest()
     return h[:12]
 
 
@@ -234,7 +245,21 @@ def _stage_local(source, default_name, ext_hint=""):
         raw_name += ext_hint
     name = _safe_filename(raw_name, default_name)
     dest = os.path.join(dest_dir, name)
-    shutil.copy2(source, dest)
+    # Atomic: copy to a sibling temp then rename. Without this, a re-
+    # render of the same source would overwrite `dest` in place while
+    # a Chromium iframe may still be loading the previous version,
+    # delivering a torn image/PDF.
+    fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=".stage-", suffix=".part")
+    os.close(fd)
+    try:
+        shutil.copy2(source, tmp)
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
     # URL-encode the path component so weird-but-safe names still work.
     quoted = urllib.parse.quote(name)
     return asset_id, f"/render/{asset_id}/{quoted}", name
@@ -251,32 +276,165 @@ def _download_to_render(url, default_name, ext_hint=""):
         raw_name += ext_hint
     name = _safe_filename(raw_name, default_name)
     dest = os.path.join(dest_dir, name)
+    # Same atomic-write reasoning as _stage_local: stream into a sibling
+    # temp, then os.replace once the download completes. If the download
+    # aborts (size cap exceeded, transport error) we never publish a
+    # half-written file at the final URL.
+    fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=".stage-", suffix=".part")
+    os.close(fd)
     try:
         with httpx.stream("GET", url, timeout=30, follow_redirects=True,
                           headers={"User-Agent": "Mozilla/5.0 ShedOS"}) as r:
             r.raise_for_status()
             total = 0
-            with open(dest, "wb") as f:
+            with open(tmp, "wb") as f:
                 for chunk in r.iter_bytes(chunk_size=64 * 1024):
                     total += len(chunk)
                     if total > MAX_RENDER_BYTES:
-                        f.close()
-                        try:
-                            os.unlink(dest)
-                        except OSError:
-                            pass
                         raise ValueError(
                             f"response exceeded {MAX_RENDER_BYTES} bytes; aborted"
                         )
                     f.write(chunk)
+        os.replace(tmp, dest)
     except httpx.HTTPError as e:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
         raise ValueError(f"download failed: {e}")
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
     quoted = urllib.parse.quote(name)
     return asset_id, f"/render/{asset_id}/{quoted}", name
 
 
+# --- Render-tab manifest (v0.6.0) ----------------------------------------
+# A small JSON file at /var/lib/shedos/render-tabs.json that survives reboots
+# and page refreshes. Each entry mirrors the {type, id, url, title} envelope
+# the GUI uses to open a tab; the GUI reads the manifest on load and re-
+# populates the tab bar from it.
+#
+# Tool calls run on a worker thread via asyncio.to_thread (see brain.py),
+# so two concurrent render_* invocations could otherwise interleave their
+# load -> mutate -> save and lose an entry. The lock makes the read-
+# modify-write atomic across threads in the brain process. (It doesn't
+# protect against a separate process editing the file, but nothing does.)
+_MANIFEST_LOCK = threading.Lock()
+
+
+def _load_manifest():
+    try:
+        with open(RENDER_MANIFEST, "r") as f:
+            data = _json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("tabs"), list):
+            return data
+        # Wrong shape (someone hand-edited it into something else):
+        # treat as corrupt, fall through to the rename-and-reset path.
+        raise ValueError("manifest top-level shape is not {tabs: [...]}")
+    except FileNotFoundError:
+        return {"tabs": []}
+    except (_json.JSONDecodeError, ValueError, OSError) as e:
+        # Corrupt or unreadable. Preserve the original as
+        # `<path>.corrupt.<timestamp>` before the next _save_manifest
+        # silently overwrites it with an empty manifest — the user
+        # can recover their tab list by hand from the backup if they
+        # care to.
+        try:
+            # time_ns() so two corruption events in the same second
+            # don't clobber the first backup.
+            backup = f"{RENDER_MANIFEST}.corrupt.{time.time_ns()}"
+            os.replace(RENDER_MANIFEST, backup)
+            import sys
+            sys.stderr.write(
+                f"[shedos] render manifest unreadable ({e}); "
+                f"preserved as {backup}, starting fresh\n"
+            )
+        except OSError:
+            pass
+        return {"tabs": []}
+
+
+def _save_manifest(manifest):
+    os.makedirs(os.path.dirname(RENDER_MANIFEST), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(RENDER_MANIFEST),
+        prefix="render-tabs-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            _json.dump(manifest, f)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, RENDER_MANIFEST)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _add_to_manifest(asset_id, rtype, title, url):
+    with _MANIFEST_LOCK:
+        m = _load_manifest()
+        # De-dupe by asset_id (same id implies same content under our
+        # content-addressed hash) — without this, repeated render_web
+        # on the same URL would pile up. Relies on _new_asset_id being
+        # deterministic per-seed; re-introducing a nonce there would
+        # silently break dedupe.
+        m["tabs"] = [t for t in m["tabs"] if t.get("id") != asset_id]
+        m["tabs"].append({
+            "id": asset_id,
+            "type": rtype,
+            "title": title,
+            "url": url,
+            "created_at": int(time.time()),
+        })
+        _save_manifest(m)
+
+
+_ASSET_ID_RE = _re.compile(r'^[0-9a-f]{12}$')
+
+
+def _validate_asset_id(asset_id):
+    """asset_ids are always 12 lowercase hex chars (sha1[:12]). Reject
+    anything else — without this, a hand-crafted
+    DELETE /api/render-tabs/../../etc would feed path-traversal into
+    shutil.rmtree below. CodeQL flagged this as 'uncontrolled data in
+    path expression'."""
+    if not isinstance(asset_id, str) or not _ASSET_ID_RE.match(asset_id):
+        raise ValueError(f"invalid asset_id: {asset_id!r}")
+
+
+def list_render_tabs():
+    """Public accessor for the manifest. web_server.py imports this for
+    `GET /api/render-tabs` so the cross-module contract is explicit
+    rather than relying on the underscore-prefixed _load_manifest()."""
+    return _load_manifest()
+
+
+def remove_render_asset(asset_id):
+    """Drop the manifest entry AND wipe the asset dir. Called by
+    web_server.py's DELETE /api/render-tabs/{id} when the user closes a
+    render tab in the GUI."""
+    _validate_asset_id(asset_id)
+    with _MANIFEST_LOCK:
+        m = _load_manifest()
+        before = len(m["tabs"])
+        m["tabs"] = [t for t in m["tabs"] if t.get("id") != asset_id]
+        _save_manifest(m)
+    dest_dir = os.path.join(RENDER_DIR, asset_id)
+    if os.path.isdir(dest_dir):
+        shutil.rmtree(dest_dir, ignore_errors=True)
+    return before != len(m["tabs"])
+
+
 def _render_response(rtype, asset_id, url, title):
-    """Result envelope the GUI looks for to open a new tab."""
+    """Result envelope the GUI looks for to open a new tab. Side effect:
+    appends to the on-disk manifest so the tab persists across refreshes."""
+    _add_to_manifest(asset_id, rtype, title, url)
     return {
         "ok": True,
         "render": {"type": rtype, "id": asset_id, "url": url, "title": title},
@@ -315,6 +473,143 @@ def tool_render_web(url):
     # render blank and the user should use net_fetch + render_markdown
     # instead.
     return _render_response("web", aid, url, title)
+
+
+# --- Rich-content render tools (v0.6.0) ----------------------------------
+
+def _render_page_html(title, body_html, mono=False):
+    """Self-contained styled HTML page. The render tabs load this via
+    iframe with a strict no-scripts sandbox, so all styling has to be
+    inline. Palette matches the GUI's tokyo-night defaults so embedded
+    tabs feel like part of the app."""
+    safe_title = _html.escape(title or "")
+    font_family = (
+        "'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace"
+        if mono else
+        "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif"
+    )
+    return (
+        f"<!doctype html>\n<html><head><meta charset=\"utf-8\">"
+        f"<title>{safe_title}</title><style>"
+        f"html,body{{margin:0;padding:0;background:#1a1b26;color:#c0caf5;"
+        f"font-family:{font_family};font-size:14px;line-height:1.55;}}"
+        f"body{{padding:24px;}}"
+        f"h1,h2,h3,h4{{color:#7aa2f7;margin:1.2em 0 .4em;}}"
+        f"a{{color:#7dcfff;}}"
+        f"code{{font-family:'JetBrains Mono','SF Mono',Menlo,monospace;"
+        f"background:#16161e;padding:1px 5px;border-radius:3px;}}"
+        f"pre{{background:#16161e;padding:14px;border-radius:6px;"
+        f"overflow-x:auto;}}"
+        f"pre code{{background:transparent;padding:0;}}"
+        f"table{{border-collapse:collapse;margin:12px 0;}}"
+        f"th,td{{border:1px solid #2f334d;padding:6px 12px;}}"
+        f"blockquote{{border-left:3px solid #7aa2f7;margin:.6em 0;"
+        f"padding:.3em 1em;color:#a9b1d6;}}"
+        f"</style></head><body>\n{body_html}\n</body></html>\n"
+    )
+
+
+def _stage_rendered_html(asset_id, html_content):
+    """Write a self-contained HTML page to /var/lib/shedos/render/<id>/
+    index.html. Atomic via mkstemp + os.replace so a brain crash mid-
+    write doesn't leave a half-written page in a permanent location
+    (matches the pattern config.save_*() and _save_manifest() use)."""
+    dest_dir = os.path.join(RENDER_DIR, asset_id)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, "index.html")
+    fd, tmp = tempfile.mkstemp(dir=dest_dir, prefix=".index-", suffix=".html")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+    return f"/render/{asset_id}/index.html"
+
+
+def tool_render_markdown(text, title="markdown"):
+    if not isinstance(text, str):
+        return {"error": "render_markdown.text must be a string"}
+    try:
+        import markdown as _md
+        body = _md.markdown(
+            text, extensions=["fenced_code", "tables", "nl2br"])
+    except ImportError:
+        body = f"<pre>{_html.escape(text)}</pre>"
+    # python-markdown passes raw HTML through by default, including
+    # <script>/<style>. The render iframe's sandbox blocks script
+    # execution and gives the iframe an opaque origin (no parent-state
+    # access) — so this is contained today, but if the sandbox is ever
+    # loosened to `allow-scripts` we'd have an XSS vector via prompt-
+    # injected markdown. Defense-in-depth: strip the tag pairs most
+    # likely to bite.
+    body = _re.sub(
+        r"<\s*(script|style)\b[^>]*>.*?<\s*/\s*\1\s*>",
+        "", body, flags=_re.IGNORECASE | _re.DOTALL)
+    body = _re.sub(r"<\s*(script|style)\b[^>]*/?\s*>",
+                    "", body, flags=_re.IGNORECASE)
+    page = _render_page_html(title or "markdown", body, mono=False)
+    asset_id = _new_asset_id("md:" + text)
+    url = _stage_rendered_html(asset_id, page)
+    return _render_response("markdown", asset_id, url, title or "markdown")
+
+
+def tool_render_code(text, language=None, title=None):
+    if not isinstance(text, str):
+        return {"error": "render_code.text must be a string"}
+    title = title or (f"{language} snippet" if language else "code")
+    # Broader except: any failure in the pygments pipeline (ImportError
+    # if the package is missing, ClassNotFound on exotic input,
+    # AttributeError on a broken install, etc.) falls back to plain
+    # <pre><code>. Without this an unexpected pygments error would
+    # propagate to dispatch() and surface as a raw {"error": ...} tool
+    # result instead of a rendered tab.
+    try:
+        from pygments import highlight as _pyg_highlight
+        from pygments.formatters import HtmlFormatter
+        from pygments.lexers import (
+            TextLexer, get_lexer_by_name, guess_lexer)
+        try:
+            lexer = (get_lexer_by_name(language) if language
+                     else guess_lexer(text))
+        except Exception:
+            lexer = TextLexer()
+        # noclasses=True inlines the styles (no separate CSS file needed)
+        formatter = HtmlFormatter(noclasses=True, style="monokai",
+                                   nowrap=False)
+        body = _pyg_highlight(text, lexer, formatter)
+    except Exception:
+        body = f"<pre><code>{_html.escape(text)}</code></pre>"
+    page = _render_page_html(title, body, mono=True)
+    asset_id = _new_asset_id(f"code:{language or ''}:{text}")
+    url = _stage_rendered_html(asset_id, page)
+    return _render_response("code", asset_id, url, title)
+
+
+def tool_render_json(value, title="json"):
+    """Pretty-print JSON in a new tab. `value` may be a JSON-encoded
+    string or any JSON-serialisable Python value (Claude commonly sends
+    dicts/lists directly via the tool-use API)."""
+    if isinstance(value, str):
+        try:
+            parsed = _json.loads(value)
+        except _json.JSONDecodeError as e:
+            return {"error": f"render_json: invalid JSON: {e}"}
+    else:
+        parsed = value
+    try:
+        pretty = _json.dumps(parsed, indent=2, ensure_ascii=False, default=str)
+    except (TypeError, ValueError) as e:
+        return {"error": f"render_json: not serialisable: {e}"}
+    body = f"<pre><code>{_html.escape(pretty)}</code></pre>"
+    page = _render_page_html(title or "json", body, mono=True)
+    asset_id = _new_asset_id("json:" + pretty)
+    url = _stage_rendered_html(asset_id, page)
+    return _render_response("json", asset_id, url, title or "json")
 
 
 SCHEMAS = [
@@ -454,6 +749,59 @@ SCHEMAS = [
             "required": ["url"],
         },
     },
+    {
+        "name": "render_markdown",
+        "description": (
+            "Render Markdown text as a styled page in a new tab. Use this "
+            "for long-form answers, formatted notes, summaries, or anything "
+            "with tables / headers / fenced code blocks that would be ugly "
+            "as chat text. Tab persists across page refreshes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "title": {"type": "string"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "render_code",
+        "description": (
+            "Render a code snippet with syntax highlighting in a new tab. "
+            "Pass `language` (e.g. 'python', 'rust', 'json', 'bash') so "
+            "Pygments picks the right lexer; if omitted it'll guess. Use "
+            "for longer snippets you want the user to read/copy — short "
+            "in-line code is fine as chat markdown."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "language": {"type": "string"},
+                "title": {"type": "string"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "render_json",
+        "description": (
+            "Pretty-print JSON in a new tab. `value` can be a JSON string "
+            "or a JSON-serialisable object/array (the API will pass dicts "
+            "and lists through directly). Use for API responses, config "
+            "dumps, anything structured."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "value": {},
+                "title": {"type": "string"},
+            },
+            "required": ["value"],
+        },
+    },
 ]
 
 
@@ -469,6 +817,9 @@ HANDLERS = {
     "render_image": tool_render_image,
     "render_pdf": tool_render_pdf,
     "render_web": tool_render_web,
+    "render_markdown": tool_render_markdown,
+    "render_code": tool_render_code,
+    "render_json": tool_render_json,
 }
 
 

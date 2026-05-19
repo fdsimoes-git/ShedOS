@@ -102,7 +102,16 @@
 
   // ---------- Tabs ------------------------------------------------------
 
-  const TAB_ICONS = { chat: "◉", image: "🖼", pdf: "📄", web: "🌐" };
+  const TAB_ICONS = {
+    chat: "◉", image: "🖼", pdf: "📄", web: "🌐",
+    markdown: "📝", code: "💻", json: "{ }",
+  };
+
+  // Render-tab types that are static HTML pages (rendered server-side
+  // under /var/lib/shedos/render/<id>/index.html). They get the same
+  // sandboxed-iframe layout as `web` but with no allow-scripts since
+  // the content is our own pre-rendered HTML.
+  const HTML_RENDER_TYPES = new Set(["markdown", "code", "json"]);
 
   function renderTabsBar() {
     els.tabsBar.innerHTML = "";
@@ -152,6 +161,20 @@
     if (/^(https?:\/\/|\/render\/|\/static\/)/i.test(u)) return u;
     if (u === "about:blank") return u;
     return "about:blank";
+  }
+
+  // For markdown/code/json render tabs the URL shape is fixed:
+  //   /render/<12-hex-asset-id>/index.html
+  // Rather than trying to *validate* an API-supplied URL string (which
+  // CodeQL doesn't recognise regex-based check as a sanitiser), we
+  // re-construct the URL from a separately-validated asset id. The
+  // regex match returns only the captured 12-hex prefix, so even a
+  // poisoned manifest can't smuggle anything else into the iframe src.
+  function htmlRenderUrlFromAssetId(rawAssetId) {
+    if (typeof rawAssetId !== "string") return null;
+    const m = rawAssetId.match(/^([0-9a-f]{12})$/);
+    if (!m) return null;
+    return "/render/" + m[1] + "/index.html";
   }
 
   function buildControls(titleText, extras = []) {
@@ -237,6 +260,37 @@
       frame.setAttribute("sandbox",
         "allow-scripts allow-same-origin allow-popups allow-forms");
       renderViewport.appendChild(frame);
+
+    } else if (HTML_RENDER_TYPES.has(tab.type)) {
+      // markdown / code / json render to a self-contained HTML file at
+      // /render/<asset_id>/index.html. The iframe src is constructed
+      // inline from the (separately validated) asset id — we never pass
+      // tab.url through, so a poisoned manifest can't redirect or XSS
+      // the iframe.
+      const icon = TAB_ICONS[tab.type] || "📄";
+      renderViewport.appendChild(buildControls(
+        `${icon} ${tab.title || tab.type}`, []));
+      const safeSrc = htmlRenderUrlFromAssetId(tab.assetId);
+      if (!safeSrc) {
+        const err = document.createElement("div");
+        err.className = "render-error";
+        err.textContent = "Render asset is missing or malformed.";
+        renderViewport.appendChild(err);
+      } else {
+        const frame = document.createElement("iframe");
+        frame.className = "render-frame";
+        frame.src = safeSrc;
+        // Strictest sandbox we can run with markdown links still working:
+        //   - no allow-scripts (our HTML is static, no JS needed)
+        //   - no allow-same-origin (iframe gets an opaque origin, can't
+        //     touch the parent's storage / cookies)
+        //   - allow-popups + allow-popups-to-escape-sandbox so <a> links
+        //     in rendered markdown can open in new tabs without inheriting
+        //     the sandbox.
+        frame.setAttribute("sandbox",
+          "allow-popups allow-popups-to-escape-sandbox");
+        renderViewport.appendChild(frame);
+      }
     }
     els.main.appendChild(renderViewport);
     els.main.classList.add("render-mode");
@@ -364,21 +418,36 @@
 
   // ---------- Tab management --------------------------------------------
 
-  function addRenderTab(render) {
+  function addRenderTab(render, { focus = true } = {}) {
     const id = `render-${render.id}`;
     if (tabs.find(t => t.id === id)) {
       // Tab already exists → just focus it
-      switchTo(id);
+      if (focus) switchTo(id);
       return;
     }
     tabs.push({
       id,
+      assetId: render.id,
       type: render.type,
       title: render.title || render.type,
       url: render.url,
     });
     renderTabsBar();
-    switchTo(id);
+    if (focus) switchTo(id);
+  }
+
+  async function restoreRenderTabs() {
+    // v0.6.0: render tabs are persisted server-side at
+    // /var/lib/shedos/render-tabs.json — re-populate the bar after a
+    // page refresh / reconnect so the user doesn't have to re-render.
+    try {
+      const data = await apiGet("/api/render-tabs");
+      const list = Array.isArray(data.tabs) ? data.tabs : [];
+      list.forEach(entry => addRenderTab(entry, { focus: false }));
+    } catch (e) {
+      // Non-fatal: chat still works, just no render tabs restored.
+      addError(`restore render tabs: ${e.message}`);
+    }
   }
 
   function closeTab(id) {
@@ -392,6 +461,11 @@
     if (t.type === "chat") {
       // delete the brain session too
       apiDelete(`/api/sessions/${t.sessionId}`).catch(() => {});
+    } else if (t.assetId) {
+      // Render tab: also drop the server-side manifest entry + the
+      // asset directory so it doesn't reappear after a refresh and
+      // doesn't accumulate on disk forever.
+      apiDelete(`/api/render-tabs/${t.assetId}`).catch(() => {});
     }
     tabs = tabs.filter(t => t.id !== id);
     if (currentTabId === id) {
@@ -885,6 +959,8 @@
     } else {
       switchTo(tabs[0].id);
     }
+    // Restore any render tabs the brain opened in a previous session.
+    await restoreRenderTabs();
     connectWS();
   })().catch(e => {
     addError(`init: ${e.message}`);
