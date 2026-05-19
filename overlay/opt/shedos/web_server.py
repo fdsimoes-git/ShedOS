@@ -293,7 +293,11 @@ async def handle_render_tabs_list(request):
 
 async def handle_render_tabs_delete(request):
     asset_id = request.match_info["asset_id"]
-    removed = tools.remove_render_asset(asset_id)
+    try:
+        removed = tools.remove_render_asset(asset_id)
+    except ValueError as e:
+        # Reject bad ids before they reach shutil.rmtree.
+        return web.json_response({"error": str(e)}, status=400)
     return web.json_response({"deleted": removed, "id": asset_id})
 
 

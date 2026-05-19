@@ -163,6 +163,17 @@
     return "about:blank";
   }
 
+  // Stricter than safeRenderUrl: for markdown/code/json render tabs the
+  // backend always writes /render/<12-hex>/index.html. Anything else
+  // (a poisoned manifest, a logic bug) collapses to about:blank instead
+  // of being passed through as a same-origin iframe target.
+  function safeHtmlRenderUrl(raw) {
+    if (typeof raw !== "string") return "about:blank";
+    return /^\/render\/[0-9a-f]{12}\/index\.html$/.test(raw.trim())
+      ? raw.trim()
+      : "about:blank";
+  }
+
   function buildControls(titleText, extras = []) {
     // Builds the .render-controls bar via DOM APIs so titles/URLs are
     // never interpolated into innerHTML.
@@ -249,16 +260,27 @@
 
     } else if (HTML_RENDER_TYPES.has(tab.type)) {
       // markdown / code / json render to a self-contained HTML file by
-      // the backend (tools.py:_stage_rendered_html). Same iframe layout
-      // as `web` but a stricter sandbox — no allow-scripts since our
-      // server-rendered HTML doesn't need them.
+      // the backend at /render/<asset_id>/index.html. Re-validate the
+      // URL against that exact shape — `safeRenderUrl` only checks the
+      // scheme, but for these tab types we know the only acceptable
+      // shape so the iframe can't be redirected to an external URL
+      // even if the manifest gets poisoned.
+      const htmlUrl = safeHtmlRenderUrl(tab.url);
       const icon = TAB_ICONS[tab.type] || "📄";
       renderViewport.appendChild(buildControls(
         `${icon} ${tab.title || tab.type}`, []));
       const frame = document.createElement("iframe");
       frame.className = "render-frame";
-      frame.src = safeUrl;
-      frame.setAttribute("sandbox", "allow-same-origin");
+      frame.src = htmlUrl;
+      // Strictest sandbox we can run with markdown links still working:
+      //   - no allow-scripts (our HTML is static, no JS needed)
+      //   - no allow-same-origin (iframe gets an opaque origin, can't
+      //     touch the parent's storage / cookies)
+      //   - allow-popups + allow-popups-to-escape-sandbox so <a> links
+      //     in rendered markdown can open in new tabs without inheriting
+      //     the sandbox.
+      frame.setAttribute("sandbox",
+        "allow-popups allow-popups-to-escape-sandbox");
       renderViewport.appendChild(frame);
     }
     els.main.appendChild(renderViewport);

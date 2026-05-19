@@ -329,10 +329,24 @@ def _add_to_manifest(asset_id, rtype, title, url):
     _save_manifest(m)
 
 
+_ASSET_ID_RE = _re.compile(r'^[0-9a-f]{12}$')
+
+
+def _validate_asset_id(asset_id):
+    """asset_ids are always 12 lowercase hex chars (sha1[:12]). Reject
+    anything else — without this, a hand-crafted
+    DELETE /api/render-tabs/../../etc would feed path-traversal into
+    shutil.rmtree below. CodeQL flagged this as 'uncontrolled data in
+    path expression'."""
+    if not isinstance(asset_id, str) or not _ASSET_ID_RE.match(asset_id):
+        raise ValueError(f"invalid asset_id: {asset_id!r}")
+
+
 def remove_render_asset(asset_id):
     """Drop the manifest entry AND wipe the asset dir. Called by
     web_server.py's DELETE /api/render-tabs/{id} when the user closes a
     render tab in the GUI."""
+    _validate_asset_id(asset_id)
     m = _load_manifest()
     before = len(m["tabs"])
     m["tabs"] = [t for t in m["tabs"] if t.get("id") != asset_id]
