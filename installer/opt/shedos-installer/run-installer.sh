@@ -72,10 +72,15 @@ rc-service udev-trigger start  >/dev/null 2>&1 || true
 rc-service udev-settle start   >/dev/null 2>&1 || true
 rc-service vmtoolsd start      >/dev/null 2>&1 || true
 
-# Step 3: pip-install textual. Not packaged for Alpine 3.23. If this
-# fails the wizard falls back to its rich-only line-by-line UI.
-echo "  installing textual..."
-pip install --quiet --no-cache-dir --break-system-packages textual \
+# Step 3: pip-install textual. Not packaged for Alpine 3.23. Pinned
+# to a known-good version so the wizard UI doesn't break the day a
+# future Textual release changes a widget API or renames a binding.
+# To bump: test in a wizard build first, then update both the pin
+# here and any code that depends on the new API.
+# If pip itself fails the wizard falls back to its rich-only UI.
+TEXTUAL_PIN="textual==0.85.2"
+echo "  installing $TEXTUAL_PIN..."
+pip install --quiet --no-cache-dir --break-system-packages "$TEXTUAL_PIN" \
     >/dev/null 2>&1 || \
     echo "[run-installer] textual install failed — will use rich fallback"
 

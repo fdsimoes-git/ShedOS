@@ -258,6 +258,17 @@ async def handle_settings_put(request):
         return web.json_response(
             {"error": f"unknown persona preset: {persona_in!r}"},
             status=400)
+    # Validate every style key + value up-front. save_style enforces the
+    # same rules, but doing it here lets us reject the whole request
+    # before any write happens (consistent with the persona check above).
+    if isinstance(style_in, dict):
+        for k, v in style_in.items():
+            if k not in config.DEFAULT_STYLE:
+                return web.json_response(
+                    {"error": f"unknown style key: {k!r}"}, status=400)
+            if config._coerce_style_bool(v) is None:
+                return web.json_response(
+                    {"error": f"style[{k!r}] must be boolean"}, status=400)
     if not isinstance(style_in, dict) and not isinstance(persona_in, str):
         return web.json_response(
             {"error": "no recognised field; expected `style` or `persona`"},

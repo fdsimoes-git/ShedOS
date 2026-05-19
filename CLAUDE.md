@@ -95,7 +95,7 @@ run-installer.sh ──→ apk add python3 py3-rich py3-pip open-vm-tools
                                        └─ writes /tmp/shedos-wizard.env
                                                   │
                                                   └─exec──→ installer.sh
-                                                              (sources the env in apply_overlay)
+                                                              (parses the env in apply_overlay)
 ```
 
 `installer.sh` keeps doing the actual disk install (parted → mkfs → `apk --root` → chroot → grub-install → reboot) and holds `/run/shedos-installer.lock` for the duration so concurrent spawns can't race on `/dev/sda`. The wizard is a thin frontend; if it crashes or is skipped, `installer.sh` falls back to baked-in defaults (default persona, terse style, ISO-baked token if any).

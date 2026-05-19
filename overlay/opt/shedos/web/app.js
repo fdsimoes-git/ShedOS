@@ -706,35 +706,43 @@
     sel.dataset.previousValue = active || "";
   }
 
+  // Monotonic id — every savePersona() call increments it and only the
+  // call whose id still matches _personaSaveLatest at await-completion
+  // may touch the UI. Prevents out-of-order PUT responses (from rapid
+  // dropdown changes) from overwriting state with stale data.
+  let _personaSaveLatest = 0;
+
   async function savePersona(name) {
     const sel = $("#persona-select");
-    // Snapshot the previous selection so we can revert on failure —
-    // otherwise the dropdown stays on the user's pick while the backend
-    // (and brain) keep using the old value, which is misleading.
     const previous = sel ? sel.dataset.previousValue || sel.value : null;
+    const myId = ++_personaSaveLatest;
+    // Disable the dropdown for the in-flight window so the user can't
+    // pile up more requests faster than they resolve.
+    if (sel) sel.disabled = true;
+    const stillLatest = () => myId === _personaSaveLatest;
     try {
       const r = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ persona: name }),
       });
+      if (!stillLatest()) return;  // a newer save started; drop this one
       if (!r.ok) {
         let detail = `${r.status}`;
         try { const j = await r.json(); if (j.error) detail = j.error; } catch {}
         throw new Error(detail);
       }
-      // Refresh the persona text panel to reflect the new active persona,
-      // and remember the now-committed value as the new baseline.
       const data = await apiGet("/api/settings");
+      if (!stillLatest()) return;
       $("#persona-text").textContent = data.persona.text;
       if (sel) sel.dataset.previousValue = data.persona.active;
     } catch (e) {
+      if (!stillLatest()) return;
       addError(`switch persona: ${e.message}`);
-      // Revert the dropdown to the backend truth so the UI doesn't lie.
-      // Best-effort re-fetch in case the previous-value snapshot is also
-      // stale (e.g. another client changed it concurrently).
+      // Revert the dropdown to backend truth so the UI doesn't lie.
       try {
         const data = await apiGet("/api/settings");
+        if (!stillLatest()) return;
         if (sel) {
           sel.value = data.persona.active;
           sel.dataset.previousValue = data.persona.active;
@@ -742,6 +750,10 @@
       } catch {
         if (sel && previous != null) sel.value = previous;
       }
+    } finally {
+      // Always re-enable, even if a newer save raced past — that newer
+      // call's own finally will disable again as needed.
+      if (sel) sel.disabled = false;
     }
   }
 

@@ -139,6 +139,22 @@ def load_persona():
     return fallback or DEFAULT_PERSONA
 
 
+def _coerce_style_bool(val):
+    """Return val as a bool if it's a real JSON boolean or 0/1; else None.
+
+    bool(...) would treat the string "false" as truthy, so a hand-edited
+    style.json or a sloppy API client could silently flip a flag the
+    wrong way. We accept only real booleans plus the integer literals 0
+    and 1 (a common JSON-from-shell idiom). Everything else returns
+    None so the caller can fall back to the default / reject input.
+    """
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, int) and val in (0, 1):
+        return bool(val)
+    return None
+
+
 def load_style():
     try:
         with open(STYLE_PATH, "r") as f:
@@ -148,17 +164,28 @@ def load_style():
         out = dict(DEFAULT_STYLE)
         for k in DEFAULT_STYLE:
             if k in data:
-                out[k] = bool(data[k])
+                coerced = _coerce_style_bool(data[k])
+                if coerced is not None:
+                    out[k] = coerced
+                # else: keep the default for that key (don't crash on a
+                # hand-edited /etc/shedos/style.json with garbage).
         return out
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return dict(DEFAULT_STYLE)
 
 
 def save_style(style):
+    """Persist style flags. Raises ValueError on bad keys/types — the
+    caller (handle_settings_put) maps that to a 400."""
     merged = dict(DEFAULT_STYLE)
-    for k in DEFAULT_STYLE:
-        if k in style:
-            merged[k] = bool(style[k])
+    for k, v in style.items():
+        if k not in DEFAULT_STYLE:
+            raise ValueError(f"unknown style key: {k!r}")
+        coerced = _coerce_style_bool(v)
+        if coerced is None:
+            raise ValueError(
+                f"style[{k!r}] must be boolean (got {type(v).__name__})")
+        merged[k] = coerced
     os.makedirs(os.path.dirname(STYLE_PATH), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(STYLE_PATH))
     try:
