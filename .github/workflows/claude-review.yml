@@ -49,6 +49,24 @@ jobs:
             Focus on: correctness bugs, security issues, missing error
             handling, missing tests, and breaking changes for callers.
             Be specific and terse.
+
+            How to leave feedback (REQUIRED — without these tool calls
+            the review goes nowhere and the PR author sees nothing):
+
+            - For each blocking issue tied to a specific line, call
+              `mcp__github_inline_comment__create_inline_comment` with
+              the file path, the side ("RIGHT" for the new version),
+              the line number, and a short body: one line stating the
+              problem, one line stating the fix. Keep each under 4
+              lines. One issue per call.
+            - When you're done reading the diff, post EXACTLY one
+              top-level summary comment via
+              `mcp__github__create_issue_comment` against PR
+              ${{ github.event.pull_request.number }}. The summary
+              must EITHER list the blocking issues you flagged inline
+              OR say literally "No blocking issues." Always post the
+              summary — silence isn't an acceptable outcome; the PR
+              author needs to know the review ran.
           claude_args: |
             --model claude-opus-4-7
             --max-turns 30
