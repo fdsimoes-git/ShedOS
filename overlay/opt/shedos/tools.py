@@ -376,7 +376,7 @@ def _save_manifest(manifest):
         raise
 
 
-def _add_to_manifest(asset_id, rtype, title, url):
+def _add_to_manifest(asset_id, rtype, title, url, filename=None):
     with _MANIFEST_LOCK:
         m = _load_manifest()
         # De-dupe by asset_id (same id implies same content under our
@@ -385,13 +385,22 @@ def _add_to_manifest(asset_id, rtype, title, url):
         # deterministic per-seed; re-introducing a nonce there would
         # silently break dedupe.
         m["tabs"] = [t for t in m["tabs"] if t.get("id") != asset_id]
-        m["tabs"].append({
+        entry = {
             "id": asset_id,
             "type": rtype,
             "title": title,
             "url": url,
             "created_at": int(time.time()),
-        })
+        }
+        # `filename` is set for image/pdf entries — the frontend uses it
+        # to reconstruct the iframe src from validated parts instead of
+        # interpolating tab.url (closes CodeQL js/xss + url-redirect
+        # alerts; see issue #15). web / markdown / code / json don't
+        # need it (web has no asset file; the others always stage at
+        # `index.html` and the frontend hard-codes that name).
+        if filename is not None:
+            entry["filename"] = filename
+        m["tabs"].append(entry)
         _save_manifest(m)
 
 
@@ -431,23 +440,28 @@ def remove_render_asset(asset_id):
     return before != len(m["tabs"])
 
 
-def _render_response(rtype, asset_id, url, title):
+def _render_response(rtype, asset_id, url, title, filename=None):
     """Result envelope the GUI looks for to open a new tab. Side effect:
-    appends to the on-disk manifest so the tab persists across refreshes."""
-    _add_to_manifest(asset_id, rtype, title, url)
-    return {
-        "ok": True,
-        "render": {"type": rtype, "id": asset_id, "url": url, "title": title},
-    }
+    appends to the on-disk manifest so the tab persists across refreshes.
+
+    `filename` should be set for render types whose URL embeds a staged
+    file name (image / pdf). The frontend uses the persisted filename
+    to reconstruct the iframe src from validated parts, instead of
+    trusting `url` — see issue #15."""
+    _add_to_manifest(asset_id, rtype, title, url, filename=filename)
+    envelope = {"type": rtype, "id": asset_id, "url": url, "title": title}
+    if filename is not None:
+        envelope["filename"] = filename
+    return {"ok": True, "render": envelope}
 
 
 def tool_render_image(source):
     try:
         if _is_url(source):
-            aid, url, title = _download_to_render(source, "image", ".img")
-            return _render_response("image", aid, url, title)
-        aid, url, title = _stage_local(source, "image", "")
-        return _render_response("image", aid, url, title)
+            aid, url, name = _download_to_render(source, "image", ".img")
+            return _render_response("image", aid, url, name, filename=name)
+        aid, url, name = _stage_local(source, "image", "")
+        return _render_response("image", aid, url, name, filename=name)
     except ValueError as e:
         return {"error": str(e)}
 
@@ -455,10 +469,10 @@ def tool_render_image(source):
 def tool_render_pdf(source):
     try:
         if _is_url(source):
-            aid, url, title = _download_to_render(source, "doc.pdf", ".pdf")
-            return _render_response("pdf", aid, url, title)
-        aid, url, title = _stage_local(source, "doc.pdf", ".pdf")
-        return _render_response("pdf", aid, url, title)
+            aid, url, name = _download_to_render(source, "doc.pdf", ".pdf")
+            return _render_response("pdf", aid, url, name, filename=name)
+        aid, url, name = _stage_local(source, "doc.pdf", ".pdf")
+        return _render_response("pdf", aid, url, name, filename=name)
     except ValueError as e:
         return {"error": str(e)}
 

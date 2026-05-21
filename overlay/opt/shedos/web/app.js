@@ -177,6 +177,25 @@
     return "/render/" + m[1] + "/index.html";
   }
 
+  // Same idea as htmlRenderUrlFromAssetId but for the image/pdf render
+  // types, whose URL shape is /render/<12-hex>/<safe-filename>. Both
+  // parts come out of the manifest; we re-validate both via match()
+  // and rebuild the URL inline so CodeQL's taint analysis terminates at
+  // the regex capture rather than flowing tab.url straight into a
+  // src/href attribute. Filename character class mirrors the
+  // server-side _safe_filename allowlist (\w . - space) — anything
+  // outside it means the manifest entry is corrupt and we drop the
+  // tab rather than render it.
+  function imagePdfRenderUrlFromAssetId(rawAssetId, rawFilename) {
+    if (typeof rawAssetId !== "string") return null;
+    if (typeof rawFilename !== "string") return null;
+    const idMatch = rawAssetId.match(/^([0-9a-f]{12})$/);
+    if (!idMatch) return null;
+    const nameMatch = rawFilename.match(/^([\w.\- ]+)$/);
+    if (!nameMatch) return null;
+    return "/render/" + idMatch[1] + "/" + encodeURIComponent(nameMatch[1]);
+  }
+
   function buildControls(titleText, extras = []) {
     // Builds the .render-controls bar via DOM APIs so titles/URLs are
     // never interpolated into innerHTML.
@@ -212,36 +231,53 @@
         mkBtn("out", "－", "Zoom out"),
         mkBtn("fit", "⤢", "Fit"),
       ]));
-      const stage = document.createElement("div");
-      stage.className = "render-image-stage";
-      const img = document.createElement("img");
-      img.src = safeUrl;
-      img.alt = tab.title || "";
-      stage.appendChild(img);
-      renderViewport.appendChild(stage);
+      const imgSrc = imagePdfRenderUrlFromAssetId(tab.assetId, tab.filename);
+      if (!imgSrc) {
+        const err = document.createElement("div");
+        err.className = "render-error";
+        err.textContent = "Image asset is missing or malformed.";
+        renderViewport.appendChild(err);
+      } else {
+        const stage = document.createElement("div");
+        stage.className = "render-image-stage";
+        const img = document.createElement("img");
+        img.src = imgSrc;
+        img.alt = tab.title || "";
+        stage.appendChild(img);
+        renderViewport.appendChild(stage);
 
-      let zoom = 1;
-      const apply = () => { img.style.transform = `scale(${zoom})`; };
-      renderViewport.addEventListener("click", (e) => {
-        const z = e.target.dataset && e.target.dataset.zoom;
-        if (z === "in") { zoom = Math.min(zoom * 1.2, 8); apply(); }
-        else if (z === "out") { zoom = Math.max(zoom / 1.2, 0.1); apply(); }
-        else if (z === "fit") { zoom = 1; apply(); }
-      });
+        let zoom = 1;
+        const apply = () => { img.style.transform = `scale(${zoom})`; };
+        renderViewport.addEventListener("click", (e) => {
+          const z = e.target.dataset && e.target.dataset.zoom;
+          if (z === "in") { zoom = Math.min(zoom * 1.2, 8); apply(); }
+          else if (z === "out") { zoom = Math.max(zoom / 1.2, 0.1); apply(); }
+          else if (z === "fit") { zoom = 1; apply(); }
+        });
+      }
 
     } else if (tab.type === "pdf") {
-      const dl = document.createElement("a");
-      dl.className = "btn-icon";
-      dl.href = safeUrl;
-      dl.download = "";
-      dl.title = "Download";
-      dl.textContent = "⬇";
-      renderViewport.appendChild(buildControls(`📄 ${tab.title || "pdf"}`,
-        [{ node: dl }]));
-      const frame = document.createElement("iframe");
-      frame.className = "render-frame";
-      frame.src = safeUrl;
-      renderViewport.appendChild(frame);
+      const pdfSrc = imagePdfRenderUrlFromAssetId(tab.assetId, tab.filename);
+      if (!pdfSrc) {
+        renderViewport.appendChild(buildControls(`📄 ${tab.title || "pdf"}`, []));
+        const err = document.createElement("div");
+        err.className = "render-error";
+        err.textContent = "PDF asset is missing or malformed.";
+        renderViewport.appendChild(err);
+      } else {
+        const dl = document.createElement("a");
+        dl.className = "btn-icon";
+        dl.href = pdfSrc;
+        dl.download = "";
+        dl.title = "Download";
+        dl.textContent = "⬇";
+        renderViewport.appendChild(buildControls(`📄 ${tab.title || "pdf"}`,
+          [{ node: dl }]));
+        const frame = document.createElement("iframe");
+        frame.className = "render-frame";
+        frame.src = pdfSrc;
+        renderViewport.appendChild(frame);
+      }
 
     } else if (tab.type === "web") {
       const open = document.createElement("a");
@@ -431,6 +467,12 @@
       type: render.type,
       title: render.title || render.type,
       url: render.url,
+      // Image / pdf entries (v0.7.2+) carry the staged filename so the
+      // frontend can reconstruct the iframe src from validated parts.
+      // Older manifest entries without `filename` will fall through to
+      // the "missing or malformed" error path in showRenderLayout — the
+      // user re-renders to fix.
+      filename: render.filename,
     });
     renderTabsBar();
     if (focus) switchTo(id);
