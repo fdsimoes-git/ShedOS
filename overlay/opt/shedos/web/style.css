@@ -401,9 +401,11 @@ html, body {
   border-color: var(--user-accent);
   /* Right-aligned user bubbles size to their content (up to max-width)
    * instead of stretching the full column — looks like a chat client
-   * rather than a forum thread. */
+   * rather than a forum thread. min(70%, 760px) so the user bubble
+   * never exceeds Claude's 760px cap on wide viewports (otherwise
+   * a 1400px window puts user at ~980px vs Claude's 760px). */
   flex: 0 1 auto;
-  max-width: 70%;
+  max-width: min(70%, 760px);
 }
 .bubble-row.claude .bubble { background: var(--assistant-bubble); border-color: var(--border-strong); }
 .bubble-row.tool .bubble {
