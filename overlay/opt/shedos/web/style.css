@@ -389,9 +389,12 @@ html, body {
   border-radius: var(--radius-lg);
   padding: 12px 16px;
   box-shadow: var(--shadow-md);
-  /* min-width: 0 so flex children can shrink below their content size
-   * (prevents long unbreakable strings from blowing out the column). */
+  /* min-width: 0 lets the flex item shrink below its intrinsic content
+   * size; overflow-wrap: anywhere then forces wrapping inside long
+   * unbreakable tokens (200-char URLs, base64 blobs, hash strings) so
+   * they stay inside the bubble instead of escaping the right edge. */
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .bubble-row.user .bubble {
   background: var(--user-bubble);
