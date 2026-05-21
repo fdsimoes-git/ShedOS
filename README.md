@@ -238,10 +238,14 @@ Fusion window or `make console` for the underlying error.
 **Wizard says `python3 not found`.** The live ISO is still doing its
 first-boot `apk add`. Wait ~30s and it'll appear.
 
-**Wizard renders garbled / no input.** Click into the Fusion window to give
-it focus. If the screen looks wrong, the wizard's `rich` fallback path
-will work too — exit X (Ctrl-C the xterm), the script drops to a
-line-by-line UI.
+**Wizard renders garbled / no input.** Most often: the Fusion window
+doesn't have keyboard focus — click into it. If the Textual UI itself
+is the problem, `wizard.py` already falls back to a line-by-line
+`rich` UI automatically *when* `textual` can't be imported (e.g. the
+live ISO's `pip install textual` step failed because of no network).
+You don't need to do anything to trigger that. If you want to bail
+and re-run from scratch, press `Esc` in the wizard — it reboots back
+to a fresh attempt.
 
 **`make tui` shows nothing after install completes.** Brain hasn't started
 yet. Give it 5–15 seconds after the post-install boot. If still empty,
