@@ -251,6 +251,16 @@ to a fresh attempt.
 yet. Give it 5–15 seconds after the post-install boot. If still empty,
 SSH in and check `ps -ef | grep brain` and `tail /var/log/messages`.
 
+**Chromium window in the Fusion VM stays blank after install.** The GUI
+loads `http://127.0.0.1:8080/` so it needs both `shedos-web` (the
+aiohttp bridge) and `shedos-brain` running. `make ssh` in, then
+`rc-status` should show both as `started`. If one is `crashed` or
+`stopped`, `rc-service shedos-brain restart` / `rc-service shedos-web
+restart` (in that order — web depends on brain). If the GUI keeps
+flashing back to a terminal, `tail /var/log/messages` plus
+`tail /var/log/shedos-{brain,web}.log` usually points at it (most
+common: missing or invalid `/etc/shedos/token`).
+
 **Brain returns "credit balance is too low".** Misleading OAuth error.
 Check (1) token is fresh — re-run `claude setup-token`, (2) the system
 prompt prefix is intact in `anthropic_client.py`, (3) the
