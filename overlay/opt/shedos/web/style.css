@@ -353,6 +353,12 @@ html, body {
   margin: 16px 0;
   animation: fade-in 200ms ease-out;
 }
+/* User messages stack on the right (avatar after bubble in DOM order
+ * via row-reverse); Claude / tool / error bubbles stay left-aligned.
+ * Familiar iMessage / WhatsApp orientation. */
+.bubble-row.user {
+  flex-direction: row-reverse;
+}
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -383,8 +389,24 @@ html, body {
   border-radius: var(--radius-lg);
   padding: 12px 16px;
   box-shadow: var(--shadow-md);
+  /* min-width: 0 lets the flex item shrink below its intrinsic content
+   * size; overflow-wrap: anywhere then forces wrapping inside long
+   * unbreakable tokens (200-char URLs, base64 blobs, hash strings) so
+   * they stay inside the bubble instead of escaping the right edge. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
-.bubble-row.user .bubble { background: var(--user-bubble); border-color: var(--user-accent); }
+.bubble-row.user .bubble {
+  background: var(--user-bubble);
+  border-color: var(--user-accent);
+  /* Right-aligned user bubbles size to their content (up to max-width)
+   * instead of stretching the full column — looks like a chat client
+   * rather than a forum thread. min(70%, 760px) so the user bubble
+   * never exceeds Claude's 760px cap on wide viewports (otherwise
+   * a 1400px window puts user at ~980px vs Claude's 760px). */
+  flex: 0 1 auto;
+  max-width: min(70%, 760px);
+}
 .bubble-row.claude .bubble { background: var(--assistant-bubble); border-color: var(--border-strong); }
 .bubble-row.tool .bubble {
   background: var(--tool-bubble);
