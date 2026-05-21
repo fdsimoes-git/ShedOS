@@ -69,8 +69,12 @@ Disk layout on `/dev/sda` (16 GB total):
   with Claude Code installed. Starts with `sk-ant-oat01-`.
 - An SSH keypair at `~/.ssh/id_ed25519` (or `id_rsa`, or `id_ecdsa`) — gets
   baked into the installer ISO for `make ssh` after install.
-- `brew install xorriso socat` (xorriso to build the ISO, socat for
-  `make tui` — host raw-mode + colors over the serial pipe).
+- `brew install xorriso socat python@3` — xorriso builds the ISO,
+  socat handles the host raw-mode + colors over the serial pipe for
+  `make tui`. macOS ships its own `/usr/bin/python3` so the brew
+  install is belt-and-suspenders (build.sh checks for `python3` at
+  startup; if you're on a stripped install without it, the brew
+  install is what makes the check pass).
 
 ## Build & install
 
@@ -140,7 +144,7 @@ markdown, syntax-highlighted code, and pretty-printed JSON.
 | `render_json`              | pretty-print JSON in a tab                         |
 
 All `render_*` tools also work when you're using the chat client (the
-`shedos-chat.py` UI prints a `→ opened <type> tab "<title>"` line so you
+`shedos-chat.py` UI prints a `→ opened <type> tab: <title>` line so you
 know to flip to the GUI window, or `ssh` and `curl http://127.0.0.1:8080/...`).
 
 ## SSH escape hatch
