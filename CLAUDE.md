@@ -14,7 +14,7 @@ All three frontends talk to a single multi-session brain daemon over `/run/shedo
 
 Authentication uses the Claude Code OAuth flow (Bearer + `anthropic-beta: oauth-2025-04-20`). The system prompt **must** start with `"You are Claude Code, Anthropic's official CLI for Claude."` — without that prefix, Opus rejects with a misleading "credit balance" 4xx. See `overlay/opt/shedos/anthropic_client.py`.
 
-## Architecture (current — main, v0.5.0+)
+## Architecture
 
 ```
 host (Mac, VMware Fusion)
