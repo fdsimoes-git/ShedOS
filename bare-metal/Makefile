@@ -112,6 +112,19 @@ KERNEL := $(OUT)/kernel.elf
 # ── Build rules ───────────────────────────────────────────────────────────────
 all: $(KERNEL)
 
+# CLAUDE_TOKEN is baked in via -D, which make can't track as a dependency —
+# and this repo often lives on exFAT (2 s mtime granularity), which defeats
+# timestamp-based rebuild detection for quick successive builds. So whenever a
+# token is supplied, unconditionally recompile the one file that embeds it and
+# relink. Cheap (~1-2 s) and guarantees the binary holds the token you passed,
+# with no `make clean` required.
+ifneq ($(strip $(CLAUDE_TOKEN)),)
+$(OUT)/claude/client.o: FORCE
+$(KERNEL): FORCE
+endif
+.PHONY: FORCE
+FORCE:
+
 $(OUT)/%.o: %.asm | $(OUT)
 	@mkdir -p $(dir $@)
 	$(ASM) $(ASMFLAGS) $< -o $@
@@ -121,7 +134,7 @@ $(OUT)/%.o: %.c | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(KERNEL): $(OBJS)
-	$(LD) $(LDFLAGS) -o $@ $^
+	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 	@echo ""
 	@echo "  Kernel: $@"
 	@ls -lh $@
