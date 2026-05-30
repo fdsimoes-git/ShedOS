@@ -1,6 +1,9 @@
 #include "sha256.h"
+#include "sha512.h"
 #include "chacha20poly1305.h"
 #include "x25519.h"
+#include "ecdsa.h"
+#include "ec_test_vectors.h"
 #include "../lib/printf.h"
 #include <string.h>
 
@@ -81,6 +84,36 @@ int crypto_selftest(void) {
         x25519(out, scalar, point);
         int p = eq(out, want, 32); ok &= p;
         printf("[crypto] x25519   %s\n", p ? "ok" : "FAIL");
+    }
+
+    /* SHA-384("abc") */
+    {
+        uint8_t h[48];
+        static const uint8_t want[48] = {
+            0xcb,0x00,0x75,0x3f,0x45,0xa3,0x5e,0x8b,0xb5,0xa0,0x3d,0x69,0x9a,0xc6,0x50,0x07,
+            0x27,0x2c,0x32,0xab,0x0e,0xde,0xd1,0x63,0x1a,0x8b,0x60,0x5a,0x43,0xff,0x5b,0xed,
+            0x80,0x86,0x07,0x2b,0xa1,0xe7,0xcc,0x23,0x58,0xba,0xec,0xa1,0x34,0xc8,0x25,0xa7};
+        sha384("abc", 3, h);
+        int p = eq(h, want, 48); ok &= p;
+        printf("[crypto] sha384   %s\n", p ? "ok" : "FAIL");
+    }
+
+    /* ECDSA P-256 verify (real openssl signature) */
+    {
+        uint8_t h[32];
+        sha256(EC_MSG, sizeof(EC_MSG), h);
+        int p = (ecdsa_verify_p256(EC_P256_PUB + 1, h, 32, EC_P256_SIG, sizeof(EC_P256_SIG)) == 0);
+        ok &= p;
+        printf("[crypto] ecdsa256 %s\n", p ? "ok" : "FAIL");
+    }
+
+    /* ECDSA P-384 verify (real openssl signature) */
+    {
+        uint8_t h[48];
+        sha384(EC_MSG, sizeof(EC_MSG), h);
+        int p = (ecdsa_verify_p384(EC_P384_PUB + 1, h, 48, EC_P384_SIG, sizeof(EC_P384_SIG)) == 0);
+        ok &= p;
+        printf("[crypto] ecdsa384 %s\n", p ? "ok" : "FAIL");
     }
 
     printf("[crypto] self-test %s\n", ok ? "PASSED" : "FAILED");
