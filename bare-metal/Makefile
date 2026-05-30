@@ -80,6 +80,7 @@ C_SRCS := \
     drivers/pci.c \
     drivers/virtio_net.c \
     net/net.c \
+    net/dns.c \
     mm/pmm.c \
     mm/heap.c \
     lib/printf.c \

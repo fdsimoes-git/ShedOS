@@ -6,6 +6,7 @@
 #include "../claude/chat.h"
 #include "../net/virtio_net.h"
 #include "../net/net.h"
+#include "../net/dns.h"
 #include <stdint.h>
 
 /* Populated by entry.asm: multiboot2 info physical address */
@@ -40,6 +41,12 @@ void kernel_main(uint32_t mb2_info_phys) {
                 if (arp_resolve(g_net.gateway, gwmac) == 0)
                     printf("[net] gateway MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
                            gwmac[0],gwmac[1],gwmac[2],gwmac[3],gwmac[4],gwmac[5]);
+                uint32_t apiip = 0;
+                if (dns_resolve("api.anthropic.com", &apiip) == 0)
+                    printf("[dns] api.anthropic.com -> %u.%u.%u.%u\n",
+                           (apiip>>24)&0xFF,(apiip>>16)&0xFF,(apiip>>8)&0xFF,apiip&0xFF);
+                else
+                    printf("[dns] resolve failed\n");
                 net_up = 1;
             } else {
                 printf("[net] DHCP failed\n");

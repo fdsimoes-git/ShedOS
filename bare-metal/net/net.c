@@ -185,7 +185,7 @@ int net_poll(void) {
 }
 
 /* Wait for a UDP datagram on `dport`, copy payload to buf. Returns len or -1. */
-static int udp_wait(uint16_t dport, uint8_t *buf, int maxlen, uint32_t *src_out) {
+int udp_recv(uint16_t dport, void *buf, int maxlen, uint32_t *src_out) {
     udp_rx_ready = 0;
     for (int spin = 0; spin < 8000000; spin++) {
         net_poll();
@@ -246,7 +246,7 @@ int dhcp_configure(void) {
     int len = dhcp_build(msg, 1, 0, 0);
     if (udp_send(0xFFFFFFFF, 68, 67, msg, len) < 0) return -1;
 
-    int rl = udp_wait(68, reply, sizeof(reply), NULL);
+    int rl = udp_recv(68, reply, sizeof(reply), NULL);
     if (rl < 240) { printf("[dhcp] no OFFER\n"); return -1; }
     uint32_t offered = bytes_to_ip(reply + 16);          /* yiaddr */
     const uint8_t *opts = reply + 240;
@@ -258,7 +258,7 @@ int dhcp_configure(void) {
     len = dhcp_build(msg, 3, offered, server_id);
     if (udp_send(0xFFFFFFFF, 68, 67, msg, len) < 0) return -1;
 
-    rl = udp_wait(68, reply, sizeof(reply), NULL);
+    rl = udp_recv(68, reply, sizeof(reply), NULL);
     if (rl < 240) { printf("[dhcp] no ACK\n"); return -1; }
     const uint8_t *type = dhcp_opt(reply + 240, rl - 240, 53, &l);
     if (!type || type[0] != 5) { printf("[dhcp] not ACK (type %d)\n", type?type[0]:-1); return -1; }

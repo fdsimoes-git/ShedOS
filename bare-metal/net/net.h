@@ -54,5 +54,9 @@ int  ip_send(uint32_t dst_ip, uint8_t proto, const void *payload, int len);
 int  udp_send(uint32_t dst_ip, uint16_t sport, uint16_t dport,
               const void *payload, int len);
 
+/* Block (with timeout) for a UDP datagram addressed to local port `dport`.
+ * Copies payload into buf, returns length or -1 on timeout. */
+int  udp_recv(uint16_t dport, void *buf, int maxlen, uint32_t *src_out);
+
 /* DHCP: acquire ip/gateway/netmask/dns from the network. 0 = ok, -1 = fail. */
 int  dhcp_configure(void);
