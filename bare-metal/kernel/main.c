@@ -18,6 +18,9 @@ void kernel_main(uint32_t mb2_info_phys) {
     pmm_init((uint64_t)mb2_info_phys);
     heap_init();
 
+    extern int crypto_selftest(void);
+    crypto_selftest();
+
     /* PCI scan — find virtio-net for networking */
     static pci_dev_t pci_table[64];
     int pci_count = pci_scan(pci_table, 64);
