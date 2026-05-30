@@ -93,6 +93,25 @@ uint64_t pmm_alloc(void) {
     return 0; /* OOM */
 }
 
+uint64_t pmm_alloc_pages(int n) {
+    if (n <= 0) return 0;
+    if (n == 1) return pmm_alloc();
+    /* First-fit run of n consecutive free frames. */
+    for (uint64_t start = 0; start + n <= total_frames; start++) {
+        int ok = 1;
+        for (int i = 0; i < n; i++) {
+            if (is_used(start + i)) { ok = 0; start += i; break; }
+        }
+        if (!ok) continue;
+        for (int i = 0; i < n; i++) {
+            mark_used(start + i);
+            free_frames--;
+        }
+        return start * PAGE_SIZE;
+    }
+    return 0; /* no contiguous run */
+}
+
 void pmm_free(uint64_t addr) {
     mark_free(addr / PAGE_SIZE);
 }

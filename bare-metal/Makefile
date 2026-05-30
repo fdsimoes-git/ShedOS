@@ -78,6 +78,8 @@ C_SRCS := \
     kernel/main.c \
     drivers/uart.c \
     drivers/pci.c \
+    drivers/virtio_net.c \
+    net/net.c \
     mm/pmm.c \
     mm/heap.c \
     lib/printf.c \
@@ -85,9 +87,8 @@ C_SRCS := \
     claude/chat.c \
     claude/session.c
 
-# TODO Phase 2b-e: add as implemented:
-#   drivers/virtio_net.c  net/arp.c  net/ipv4.c  net/udp.c  net/dns.c
-#   net/tcp.c  net/tls.c  http/client.c  claude/client.c
+# TODO Phase 2c-e: add as implemented:
+#   net/dns.c  net/tcp.c  net/tls.c  http/client.c  claude/client.c
 
 ASM_OBJS := $(patsubst %.asm,$(OUT)/%.o,$(ASM_SRCS))
 C_OBJS   := $(patsubst %.c,$(OUT)/%.o,$(C_SRCS))
@@ -128,9 +129,13 @@ iso: $(KERNEL)
 	@echo "  ISO: $(ISO)"
 
 # ── QEMU launch ───────────────────────────────────────────────────────────────
+# -M pc (i440fx, conventional PCI) + disable-modern=on gives a *legacy*
+# virtio-net device with an I/O-port BAR0 — what drivers/virtio_net.c drives.
+# Legacy virtio is not valid on a q35 PCIe root port.
 QEMU_FLAGS := \
-    -M q35 -m 256M \
-    -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+    -M pc -m 256M \
+    -netdev user,id=n0 \
+    -device virtio-net-pci,netdev=n0,disable-modern=on,disable-legacy=off \
     -serial stdio \
     -display none \
     -no-reboot
