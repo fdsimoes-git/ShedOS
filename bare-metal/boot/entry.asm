@@ -62,8 +62,18 @@ _start:
     or  eax, 0x03
     mov [pdpt], eax
 
-    ; PD[0] -> 0x000000 with PS (huge 2 MiB page, present, writable)
-    mov dword [pd], 0x00000083  ; bit7=PS, bit1=RW, bit0=P
+    ; Identity-map the first 1 GiB: PD[0..511], each a 2 MiB huge page.
+    ; heap.c/pmm.c assume phys==virt across the first 1 GiB; mapping only
+    ; PD[0] (2 MiB) page-faults as soon as the heap reaches 4 MiB.
+    ; High dword of each entry stays 0 (GRUB zero-fills .bss).
+    mov ecx, 0                  ; PD entry index
+    mov eax, 0x00000083         ; phys 0 | PS|RW|P
+.fill_pd:
+    mov [pd + ecx*8], eax
+    add eax, 0x200000           ; next 2 MiB frame
+    inc ecx
+    cmp ecx, 512
+    jne .fill_pd
 
     ; Load CR3 with PML4 base
     mov eax, pml4
@@ -84,6 +94,11 @@ _start:
     mov eax, cr0
     or  eax, (1 << 31) | 1
     mov cr0, eax
+
+    ; Load our own GDT before the far jump — GRUB's leftover GDT has no
+    ; 64-bit code descriptor at selector 0x08, so jumping without this
+    ; #GPs and triple-faults.
+    lgdt [gdt64_ptr]
 
     ; Far jump to flush pipeline and enter long mode with our 64-bit segment
     jmp 0x08:.long_mode

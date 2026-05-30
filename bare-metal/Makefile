@@ -37,9 +37,28 @@ endif
 
 ASM := nasm
 
+# grub-mkrescue is unprefixed on Linux (and bundles the i386-pc BIOS modules,
+# so the rescue ISO boots under QEMU's default SeaBIOS). On macOS install a
+# cross GRUB via Homebrew; prefer i686-elf-grub (i386-pc/BIOS) because the
+# qemu target below boots with SeaBIOS — x86_64-elf-grub only ships the
+# x86_64-efi platform, whose Multiboot2 loader needs UEFI + a framebuffer tag.
+ifneq ($(shell command -v grub-mkrescue 2>/dev/null),)
+    GRUB_MKRESCUE := grub-mkrescue
+else ifneq ($(shell command -v i686-elf-grub-mkrescue 2>/dev/null),)
+    GRUB_MKRESCUE := i686-elf-grub-mkrescue
+else ifneq ($(shell command -v x86_64-elf-grub-mkrescue 2>/dev/null),)
+    GRUB_MKRESCUE := x86_64-elf-grub-mkrescue
+else
+    GRUB_MKRESCUE := grub-mkrescue
+endif
+
 # ── Flags ─────────────────────────────────────────────────────────────────────
+# -mno-sse/sse2/mmx/80387: the kernel never enables SSE (no OSFXSR in CR4),
+# so let the compiler auto-vectorize memset/memcpy with XMM at -O2 and the
+# first such instruction #UDs. Forbid FP/vector codegen entirely.
 CFLAGS := -std=c11 -ffreestanding -fno-stack-protector -fno-pic \
-           -mno-red-zone -m64 -Wall -Wextra -O2 \
+           -mno-red-zone -mno-sse -mno-sse2 -mno-mmx -mno-80387 \
+           -m64 -Wall -Wextra -O2 \
            -nostdinc -I./include \
            $(CFLAGS_EXTRA)
 
@@ -100,12 +119,12 @@ $(OUT):
 ISO := $(OUT)/shedos-bare.iso
 
 iso: $(KERNEL)
-	@command -v grub-mkrescue >/dev/null 2>&1 || \
-		{ echo "grub-mkrescue not found — brew install grub (Mac) or apt install grub-pc-bin grub-efi-amd64-bin (Linux)"; exit 1; }
+	@command -v $(GRUB_MKRESCUE) >/dev/null 2>&1 || \
+		{ echo "$(GRUB_MKRESCUE) not found — brew install x86_64-elf-grub xorriso (Mac) or apt install grub-pc-bin grub-efi-amd64-bin xorriso (Linux)"; exit 1; }
 	mkdir -p $(OUT)/isoroot/boot/grub
 	cp $(KERNEL) $(OUT)/isoroot/boot/kernel.elf
 	cp iso/grub.cfg $(OUT)/isoroot/boot/grub/grub.cfg
-	grub-mkrescue -o $(ISO) $(OUT)/isoroot 2>/dev/null
+	$(GRUB_MKRESCUE) -o $(ISO) $(OUT)/isoroot 2>/dev/null
 	@echo "  ISO: $(ISO)"
 
 # ── QEMU launch ───────────────────────────────────────────────────────────────
