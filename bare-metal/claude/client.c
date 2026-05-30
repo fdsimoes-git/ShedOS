@@ -125,12 +125,16 @@ int claude_turn(char *reply, int reply_max) {
         return -1;
     }
 
-    if (json_find_string(resp.body, "\"text\":", reply, reply_max)) return 0;
-    if (json_find_string(resp.body, "\"message\":", reply, reply_max)) {  /* API error */
-        printf("[claude] HTTP %d\n", resp.status);
-        return -1;
+    if (resp.status == 200 && json_find_string(resp.body, "\"text\":", reply, reply_max))
+        return 0;
+
+    /* Non-success: surface the real server message (and status) so rate
+     * limits / quota / model errors are visible rather than a generic "Error". */
+    printf("[claude] HTTP %d\n", resp.status);
+    if (!json_find_string(resp.body, "\"message\":", reply, reply_max)) {
+        int n = 0;
+        while (resp.body[n] && n < reply_max - 1) { reply[n] = resp.body[n]; n++; }
+        reply[n] = 0;
     }
-    int n = 0; const char *m = "(could not parse API response)";
-    while (m[n] && n < reply_max-1) { reply[n]=m[n]; n++; } reply[n]=0;
     return -1;
 }

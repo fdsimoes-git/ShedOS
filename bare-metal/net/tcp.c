@@ -136,13 +136,19 @@ tcp_conn_t *tcp_connect(uint32_t dst_ip, uint16_t dst_port) {
     memset(&conn, 0, sizeof(conn));
     conn.remote_ip   = dst_ip;
     conn.remote_port = dst_port;
-    conn.local_port  = LOCAL_PORT;
-    conn.snd_nxt = conn.snd_una = ISS;
+    /* Fresh local port + ISS per connection. Reusing a fixed 4-tuple and
+     * sequence makes a quick reconnect look like a stale/duplicate flow to
+     * the peer, which drops our SYN (the "connect timeout" on retries). */
+    uint32_t r;
+    __asm__ volatile("rdtsc" : "=a"(r) : : "edx");
+    uint32_t iss = (r * 2654435761u) | 1;
+    conn.local_port = 49152 + (uint16_t)((r >> 7) % 16000);
+    conn.snd_nxt = conn.snd_una = iss;
     conn.state   = SYN_SENT;
     conn_active  = 1;
 
     for (int tries = 0; tries < 6; tries++) {
-        conn.snd_nxt = ISS;                    /* re-send SYN with same ISS */
+        conn.snd_nxt = iss;                    /* re-send SYN with same ISS */
         tcp_xmit(F_SYN, NULL, 0);
         for (int spin = 0; spin < 3000000; spin++) {
             net_poll();
