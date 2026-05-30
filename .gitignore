@@ -4,6 +4,7 @@ out/
 # template, launch script, and this list of exceptions).
 vmware/*
 !vmware/shedos.vmx.tmpl
+!vmware/shedos-x86.vmx.tmpl
 !vmware/launch.sh
 *.iso
 __pycache__/

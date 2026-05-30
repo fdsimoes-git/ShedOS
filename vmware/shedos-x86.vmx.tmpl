@@ -1,0 +1,50 @@
+.encoding = "UTF-8"
+config.version = "8"
+virtualHW.version = "21"
+displayName = "ShedOS (x86_64)"
+
+guestOS = "rhel-9-64"
+firmware = "efi"
+
+memsize = "2048"
+numvcpus = "2"
+cpuid.coresPerSocket = "2"
+
+# Storage:
+#   sata0:0 = installer ISO (also serves as recovery media; UEFI ignores it
+#             once the disk has a valid bootloader)
+#   sata0:1 = 16 GB system disk Alpine + ShedOS gets installed onto
+sata0.present = "TRUE"
+sata0:0.present = "TRUE"
+sata0:0.fileName = "../out/shedos-installer.iso"
+sata0:0.deviceType = "cdrom-image"
+sata0:0.startConnected = "TRUE"
+sata0:1.present = "TRUE"
+sata0:1.fileName = "shedos-system.vmdk"
+sata0:1.deviceType = "disk"
+sata0:1.startConnected = "TRUE"
+
+# USB host controllers. Without these, Fusion presents no USB bus to the
+# guest, so no virtual keyboard / mouse hardware appears.
+usb.present = "TRUE"
+ehci.present = "TRUE"
+usb_xhci.present = "TRUE"
+
+# Network: NAT so it works behind Wi-Fi without manual interface picking
+ethernet0.present = "TRUE"
+ethernet0.connectionType = "nat"
+ethernet0.virtualDev = "vmxnet3"
+ethernet0.addressType = "generated"
+ethernet0.startConnected = "TRUE"
+
+# Serial console -> Unix domain socket.
+serial0.present = "TRUE"
+serial0.fileType = "pipe"
+serial0.fileName = "/tmp/shedos.serial"
+serial0.pipe.endPoint = "server"
+serial0.tryNoRxLoss = "FALSE"
+serial0.startConnected = "TRUE"
+serial0.yieldOnMsrRead = "TRUE"
+
+# Power-on behavior
+gui.exitOnCLIHLT = "FALSE"

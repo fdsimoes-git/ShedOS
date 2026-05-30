@@ -19,7 +19,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 
 ALPINE_VERSION="$(tr -d '[:space:]' < config/alpine-release)"
-ARCH="$(tr -d '[:space:]' < config/arch)"
+# ARCH can be overridden via env (e.g. ARCH=x86_64 make iso); falls back to config/arch.
+ARCH="${ARCH:-$(tr -d '[:space:]' < config/arch)}"
 ALPINE_MAJOR="${ALPINE_VERSION%.*}"
 SHEDOS_VERSION="$(tr -d '[:space:]' < config/version)"
 ISO_NAME="alpine-virt-${ALPINE_VERSION}-${ARCH}.iso"
@@ -51,14 +52,15 @@ require python3 python
 mkdir -p "$WORK" "$OUT" "$ISO_ORIG_DIR"
 
 # --- 0. Ensure the persistent 16GB system VMDK exists -----------------------
-if [[ ! -f "$SYSTEM_VMDK" ]]; then
+# Skip entirely when SKIP_VMDK=1 (e.g. building for QEMU, or on Linux hosts).
+if [[ "${SKIP_VMDK:-0}" != "1" && ! -f "$SYSTEM_VMDK" ]]; then
     log "creating 16GB system disk: $SYSTEM_VMDK"
     VDM="/Applications/VMware Fusion.app/Contents/Library/vmware-vdiskmanager"
     if [[ -x "$VDM" ]]; then
         "$VDM" -c -s 16GB -a lsilogic -t 0 "$SYSTEM_VMDK" >/dev/null \
             || die "vmware-vdiskmanager failed to create $SYSTEM_VMDK"
     else
-        die "vmware-vdiskmanager not found at $VDM — install VMware Fusion or set up the VMDK manually"
+        log "vmware-vdiskmanager not found — skipping VMDK creation (use SKIP_VMDK=1 to suppress this, or create the disk manually for VMware)"
     fi
 fi
 
@@ -127,6 +129,13 @@ find "$INSTALLER_STAGE" -type f -name '*.sh' -exec chmod 0755 {} \;
 mkdir -p "$INSTALLER_STAGE/opt/shedos-installer"
 cp "$TARGET_TARBALL" "$INSTALLER_STAGE/opt/shedos-installer/overlay.tar.gz"
 cp config/target-packages.list "$INSTALLER_STAGE/opt/shedos-installer/packages.list"
+# On x86_64, swap the generic framebuffer driver for the VMware-optimised one.
+# xf86-video-vmware is x86-only and not available for arm64.
+if [[ "$ARCH" == "x86_64" ]]; then
+    log "x86_64: substituting xf86-video-vmware for xf86-video-fbdev in packages.list"
+    sed -i 's/^xf86-video-fbdev$/xf86-video-vmware/' \
+        "$INSTALLER_STAGE/opt/shedos-installer/packages.list"
+fi
 
 # Pin Alpine version + arch to whatever config/ says, so installer.sh
 # uses the same values the build pipeline did (instead of hardcoded ones).
@@ -307,11 +316,19 @@ sha=$(shasum -a 256 "$OUT_ISO" | awk '{print $1}')
 human=$(( size / 1024 / 1024 ))
 log "done."
 printf '\n'
+printf '  arch:   %s\n' "$ARCH"
 printf '  ISO:    %s\n' "$OUT_ISO"
 printf '  size:   %s MiB\n' "$human"
 printf '  sha256: %s\n' "$sha"
-printf '  system: %s (16 GB)\n' "$SYSTEM_VMDK"
+if [[ -f "$SYSTEM_VMDK" ]]; then
+    printf '  system: %s (16 GB)\n' "$SYSTEM_VMDK"
+fi
 printf '\n'
-printf '  Next:   make run        # boot ISO -> auto-installs onto disk -> reboots into ShedOS\n'
-printf '          make console    # talk to the brain over the serial pipe\n'
+if [[ "$ARCH" == "x86_64" ]]; then
+    printf '  Next (QEMU):  make qemu-run    # boot + install in QEMU\n'
+    printf '                make qemu-serial # attach to serial console\n'
+else
+    printf '  Next:   make run        # boot ISO -> auto-installs onto disk -> reboots into ShedOS\n'
+    printf '          make console    # talk to the brain over the serial pipe\n'
+fi
 printf '\n'

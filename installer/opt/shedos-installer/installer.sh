@@ -51,6 +51,15 @@ fi
 [ -n "$ALPINE_VERSION" ] && [ -n "$ARCH" ] \
     || die "ALPINE_VERSION/ARCH not set and could not be derived"
 
+# Map Alpine ARCH to grub-install target and EFI boot binary name.
+# These are written to /tmp inside the target before chroot so the chroot
+# script can source them (the heredoc uses <<'CHROOT' so outer vars don't expand).
+case "$ARCH" in
+    aarch64) GRUB_TARGET="arm64-efi";  BOOT_EFI="BOOTAA64.EFI" ;;
+    x86_64)  GRUB_TARGET="x86_64-efi"; BOOT_EFI="BOOTX64.EFI"  ;;
+    *)       GRUB_TARGET="${ARCH}-efi"; BOOT_EFI="BOOTX64.EFI"  ;;
+esac
+
 banner() {
     cat <<BANNER
 
@@ -299,9 +308,16 @@ chroot_setup() {
     mount --bind /dev "$MNT/dev"
     mount -t devpts devpts "$MNT/dev/pts" 2>/dev/null || true
 
+    # Pass arch-specific bootloader vars into the chroot via a temp env file.
+    # The heredoc below uses <<'CHROOT' (single-quoted) so outer shell variables
+    # don't expand inside — we need an explicit file to cross the boundary.
+    printf 'GRUB_TARGET="%s"\nBOOT_EFI="%s"\n' "$GRUB_TARGET" "$BOOT_EFI" \
+        > "$MNT/tmp/shedos-arch.env"
+
     chroot "$MNT" /bin/sh <<'CHROOT' 2>&1
 set -e
 say() { printf '\n\033[1;34m[shedos-install:chroot]\033[0m %s\n' "$*"; }
+. /tmp/shedos-arch.env
 
 say "enabling OpenRC services"
 # Use eudev (udev) instead of busybox mdev — Xorg requires udev for
@@ -335,12 +351,12 @@ GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"
 GRUB_DISABLE_OS_PROBER=true
 GRUB
 
-say "grub-install --target=arm64-efi --efi-directory=/boot/efi --removable --no-nvram"
+say "grub-install --target=$GRUB_TARGET --efi-directory=/boot/efi --removable --no-nvram"
 # Capture to a file so a non-zero exit from grub-install isn't masked by
 # the success of `tail` (set -e + pipelines). Then tail the captured log
 # only after the command's exit status has been preserved.
 grub_log=$(mktemp)
-if ! grub-install --target=arm64-efi --efi-directory=/boot/efi \
+if ! grub-install --target="$GRUB_TARGET" --efi-directory=/boot/efi \
                   --removable --no-nvram --verbose >"$grub_log" 2>&1; then
     say "grub-install FAILED. Last 40 lines:"
     tail -40 "$grub_log"
@@ -350,9 +366,9 @@ fi
 tail -20 "$grub_log"
 rm -f "$grub_log"
 
-say "verifying BOOTAA64.EFI is in place"
-[ -f /boot/efi/EFI/BOOT/BOOTAA64.EFI ] \
-    || { say "  /boot/efi/EFI/BOOT/BOOTAA64.EFI missing — install will not boot from disk!"; exit 1; }
+say "verifying $BOOT_EFI is in place"
+[ -f "/boot/efi/EFI/BOOT/$BOOT_EFI" ] \
+    || { say "  /boot/efi/EFI/BOOT/$BOOT_EFI missing — install will not boot from disk!"; exit 1; }
 ls -la /boot/efi/EFI/BOOT/
 
 say "grub-mkconfig"
