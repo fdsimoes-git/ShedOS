@@ -155,6 +155,11 @@ static void ipv4_handle(const uint8_t *p, int len) {
     if (len < 20) return;
     int ihl = (p[0] & 0x0F) * 4;
     if (ihl < 20 || len < ihl) return;
+    /* Honor the IP total-length field: small frames are zero-padded up to
+     * the 60-byte Ethernet minimum, and that padding must not be mistaken
+     * for TCP/UDP payload. */
+    int total = (p[2] << 8) | p[3];
+    if (total >= ihl && total < len) len = total;
     uint8_t proto = p[9];
     uint32_t src  = bytes_to_ip(p + 12);
 

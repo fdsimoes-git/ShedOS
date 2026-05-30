@@ -83,6 +83,7 @@ C_SRCS := \
     net/net.c \
     net/dns.c \
     net/tcp.c \
+    net/tls.c \
     crypto/sha256.c \
     crypto/sha512.c \
     crypto/chacha20poly1305.c \
