@@ -1,4 +1,5 @@
 #include "net.h"
+#include "tcp.h"
 #include "../lib/printf.h"
 #include <string.h>
 #include <stddef.h>
@@ -156,6 +157,11 @@ static void ipv4_handle(const uint8_t *p, int len) {
     if (ihl < 20 || len < ihl) return;
     uint8_t proto = p[9];
     uint32_t src  = bytes_to_ip(p + 12);
+
+    if (proto == IP_PROTO_TCP) {
+        tcp_input(src, p + ihl, len - ihl);
+        return;
+    }
     if (proto != IP_PROTO_UDP) return;
 
     const uint8_t *u = p + ihl;
