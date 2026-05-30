@@ -50,23 +50,7 @@ void kernel_main(uint32_t mb2_info_phys) {
                 if (dns_resolve("api.anthropic.com", &apiip) == 0) {
                     printf("[dns] api.anthropic.com -> %u.%u.%u.%u\n",
                            (apiip>>24)&0xFF,(apiip>>16)&0xFF,(apiip>>8)&0xFF,apiip&0xFF);
-                    printf("[tls] connecting to api.anthropic.com:443 ...\n");
-                    tls_conn_t *t = tls_connect(apiip, 443, "api.anthropic.com");
-                    if (t) {
-                        const char *req =
-                            "GET / HTTP/1.1\r\nHost: api.anthropic.com\r\n"
-                            "Connection: close\r\nAccept: */*\r\n\r\n";
-                        int rl = 0; while (req[rl]) rl++;
-                        tls_send(t, req, rl);
-                        static char resp[1024];
-                        int n = tls_recv(t, resp, sizeof(resp) - 1);
-                        if (n > 0) {
-                            int i = 0; while (i < n && resp[i] != '\r' && resp[i] != '\n') i++;
-                            resp[i] = '\0';
-                            printf("[https] server says: %s\n", resp);
-                        }
-                        tls_close(t);
-                    }
+                    (void)apiip;
                 } else {
                     printf("[dns] resolve failed\n");
                 }

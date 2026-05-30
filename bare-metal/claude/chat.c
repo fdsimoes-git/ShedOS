@@ -1,5 +1,6 @@
 #include "chat.h"
 #include "session.h"
+#include "client.h"
 #include "../drivers/uart.h"
 #include "../lib/printf.h"
 #include <string.h>
@@ -53,10 +54,10 @@ void chat_run(pci_dev_t *nic) {
     printf("╚══════════════════════════════════════════════════╝\n");
     printf("\n");
 
-    /* TODO Phase 2c: bring up virtio-net → DHCP → get IP */
-    printf("[net] STUB: networking not yet implemented\n");
-    printf("[net] Phase 2c (TCP/IP) will enable DHCP + DNS + HTTPS here\n\n");
+    if (!claude_has_token())
+        printf("[chat] no token baked in — rebuild with `make CLAUDE_TOKEN=sk-ant-oat01-...`\n\n");
 
+    static char reply[65536];
     while (1) {
         int n = readline("ShedOS> ", linebuf, sizeof(linebuf));
         if (n < 0) continue; /* Ctrl-C */
@@ -68,9 +69,12 @@ void chat_run(pci_dev_t *nic) {
         }
 
         session_add("user", linebuf);
-
-        /* TODO Phase 2e: call claude_send_turn() and print real reply */
-        printf("Claude: [STUB — networking not yet implemented]\n\n");
-        session_add("assistant", "[stub]");
+        printf("(contacting api.anthropic.com over TLS...)\n");
+        if (claude_turn(reply, sizeof(reply)) == 0) {
+            printf("\nClaude: %s\n\n", reply);
+            session_add("assistant", reply);
+        } else {
+            printf("\n[error] %s\n\n", reply);
+        }
     }
 }

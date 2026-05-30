@@ -96,7 +96,9 @@ C_SRCS := \
     lib/printf.c \
     lib/string.c \
     claude/chat.c \
-    claude/session.c
+    claude/client.c \
+    claude/session.c \
+    http/client.c
 
 # TODO Phase 2c-e: add as implemented:
 #   net/dns.c  net/tcp.c  net/tls.c  http/client.c  claude/client.c
