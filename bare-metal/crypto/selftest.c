@@ -4,6 +4,9 @@
 #include "x25519.h"
 #include "ecdsa.h"
 #include "ec_test_vectors.h"
+#include "x509_test_vectors.h"
+#include "../x509/x509.h"
+#include "../drivers/rtc.h"
 #include "../lib/printf.h"
 #include <string.h>
 
@@ -114,6 +117,19 @@ int crypto_selftest(void) {
         int p = (ecdsa_verify_p384(EC_P384_PUB + 1, h, 48, EC_P384_SIG, sizeof(EC_P384_SIG)) == 0);
         ok &= p;
         printf("[crypto] ecdsa384 %s\n", p ? "ok" : "FAIL");
+    }
+
+    /* X.509 chain validation against the real api.anthropic.com chain.
+     * now=0 skips the date window so the test stays valid past cert expiry
+     * (the chain signatures themselves are time-invariant). */
+    {
+        int p = (x509_validate_chain(LEAF_DER, sizeof LEAF_DER,
+                                     INTER_DER, sizeof INTER_DER,
+                                     "api.anthropic.com", 0) == 0);
+        ok &= p;
+        printf("[crypto] x509     %s  (leaf<-WE1<-GTS Root R4, SAN ok)\n", p ? "ok" : "FAIL");
+        unsigned long long t = (unsigned long long)rtc_now();
+        printf("[crypto] rtc now  %llu (YYYYMMDDHHMMSS)\n", t);
     }
 
     printf("[crypto] self-test %s\n", ok ? "PASSED" : "FAILED");

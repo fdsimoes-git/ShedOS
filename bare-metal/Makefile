@@ -79,6 +79,7 @@ C_SRCS := \
     drivers/uart.c \
     drivers/pci.c \
     drivers/virtio_net.c \
+    drivers/rtc.c \
     net/net.c \
     net/dns.c \
     net/tcp.c \
@@ -88,6 +89,7 @@ C_SRCS := \
     crypto/x25519.c \
     crypto/ecdsa.c \
     crypto/selftest.c \
+    x509/x509.c \
     mm/pmm.c \
     mm/heap.c \
     lib/printf.c \
