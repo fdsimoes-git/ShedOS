@@ -6,9 +6,9 @@
 
 <p align="center">
   A minimal Linux distro where Claude is the only user-facing process.<br>
-  Boot it in VMware Fusion on Apple Silicon, walk a wizard, and from then on you
-  talk to Claude — through a Chromium GUI on the Fusion window, or over SSH /
-  the serial pipe.
+  Boot it in VMware Fusion on Apple Silicon (arm64), in QEMU, or on real
+  Intel/AMD hardware (x86_64) — walk a wizard, and from then on you talk to
+  Claude through a Chromium GUI, or over SSH / the serial pipe.
 </p>
 
 ---
@@ -39,7 +39,7 @@ host (Mac, VMware Fusion)
    ├─ vmware/shedos-system.vmdk   (16 GB, persistent)
    └─ /tmp/shedos.serial          (Unix socket pipe to guest's ttyS0)
 
-guest (VM, Alpine 3.23 aarch64)
+guest (Alpine 3.23 — aarch64 VM, or x86_64 VM / bare metal)
    tty1   ──→ Chromium --kiosk --app=http://127.0.0.1:8080/   ← the GUI
    ttyS0  ──→ shedos-chat.py                                  ← text fallback
    sshd   ──→ root shell + /usr/local/bin/shedos-chat
@@ -53,30 +53,39 @@ guest (VM, Alpine 3.23 aarch64)
      └─ render-tabs.json          open render tabs (replayed on page refresh)
 ```
 
-Disk layout on `/dev/sda` (16 GB total):
+Disk layout (GPT) on the **auto-detected** target disk — VMware `sda`, QEMU
+`vda`, or real `nvme0n1`/`sda` (largest fixed, non-removable, non-boot disk).
+On a 16 GB disk:
 
 | Partition | Size      | FS    | Mount     |
 |-----------|-----------|-------|-----------|
-| sda1 ESP  | 256 MiB   | FAT32 | /boot/efi |
-| sda2 root | 4 GiB     | ext4  | /         |
-| sda3 home | ~11.7 GiB | ext4  | /home     |
+| ESP (p1)  | 256 MiB   | FAT32 | /boot/efi |
+| root (p2) | 4 GiB     | ext4  | /         |
+| home (p3) | rest      | ext4  | /home     |
 
 ## Requirements (host)
 
-- macOS on Apple Silicon (Alpine arm64 + Fusion arm64 VM)
-- VMware Fusion 13+
+Always:
+
 - A Claude Code OAuth token. Get one with `claude setup-token` on any machine
   with Claude Code installed. Starts with `sk-ant-oat01-`.
 - An SSH keypair at `~/.ssh/id_ed25519` (or `id_rsa`, or `id_ecdsa`) — gets
   baked into the installer ISO for `make ssh` after install.
-- `brew install xorriso socat python@3` — xorriso builds the ISO,
-  socat handles the host raw-mode + colors over the serial pipe for
-  `make tui`. macOS ships its own `/usr/bin/python3` so the brew
-  install is belt-and-suspenders (build.sh checks for `python3` at
-  startup; if you're on a stripped install without it, the brew
-  install is what makes the check pass).
+- `brew install xorriso socat python@3` — xorriso builds the ISO, socat
+  handles the host raw-mode + colors over the serial pipe for `make tui`.
+
+Then pick a target:
+
+- **arm64 — VMware Fusion:** macOS on Apple Silicon + VMware Fusion 13+
+  (Alpine arm64 + Fusion arm64 VM). → `make run`.
+- **x86_64 — QEMU:** `brew install qemu` (also ships the OVMF/UEFI firmware
+  ShedOS needs — it installs an EFI-only bootloader). → `make qemu-run`.
+- **x86_64 — bare metal:** any Intel/AMD UEFI machine + a USB stick.
+  → `make iso-x86`, then `dd` the ISO and boot the target.
 
 ## Build & install
+
+**arm64 — VMware Fusion on Apple Silicon:**
 
 ```bash
 export CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat01-...'
@@ -84,9 +93,27 @@ make iso               # builds out/shedos-installer.iso + a 16 GB vmware/shedos
 make run               # boots the VM in Fusion; first boot runs the wizard + installer
 ```
 
+**x86_64 — QEMU, or real Intel/AMD hardware:**
+
+```bash
+export CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat01-...'
+make iso-x86           # builds out/shedos-installer-x86_64.iso (alpine-standard + linux-lts + firmware)
+make qemu-run          # boot + install in QEMU (needs `brew install qemu`). After it reboots, then:
+make qemu-serial       #   talk to the installed system over serial (headless chat client), or
+make qemu-gui          #   boot it with the graphical GUI in a window (slow under TCG emulation)
+# bare metal: sudo dd if=out/shedos-installer-x86_64.iso of=/dev/diskN bs=4m  (then boot the target)
+```
+
+The installer **auto-detects** the target disk (largest fixed, non-removable
+disk that isn't the boot medium) and shows it in the wizard before erasing.
+Tuning knobs for the QEMU targets: `QEMU_MEM` (default 2G), `QEMU_CPUS`
+(default 4; CPU-bound under emulation, so more vCPUs help more than RAM),
+`QEMU_OVMF` (auto-detected UEFI firmware path).
+
 Skipping the token export still works — the wizard prompts for one (and you
 can also paste with Cmd+V into the Fusion window, since the wizard runs
-under X with VMware Tools clipboard bridging).
+under X with VMware Tools clipboard bridging). Note: changing
+`CLAUDE_CODE_OAUTH_TOKEN` re-triggers an ISO rebuild on the next `make`.
 
 First install takes ~5–10 min (apk fetches a few hundred MB from the Alpine
 CDN). After the post-install reboot, normal boots are ~5–10 seconds.
@@ -104,6 +131,8 @@ make tui      # connect to shedos-chat.py over the serial pipe (needs `brew inst
 make ssh      # SSH into the VM; then run `shedos-chat` from any directory
 make console  # raw `nc -U` over the serial pipe — debug-only; ttyS0 hosts shedos-chat
               # which needs a PTY, so `make tui` is the right user-facing version
+
+# x86_64 (QEMU): make qemu-serial gives you the chat client; make qemu-gui shows the GUI.
 ```
 
 **GUI features:** click `+` for a new chat tab, click `⚙` for settings
@@ -180,8 +209,8 @@ the ISO + `make wipe-system && make run` to reinstall fresh.
 ```
 shedos/
 ├── README.md, LICENSE, CLAUDE.md
-├── Makefile               iso, run, tui, ssh, ip, wipe-system, …
-├── build.sh               build pipeline
+├── Makefile               iso, iso-x86, run, qemu-run/serial/gui, vm/vm-x86, tui, ssh, …
+├── build.sh               build pipeline (ARCH=x86_64 / OUT_ISO= / SKIP_VMDK= aware)
 ├── config/
 │   ├── alpine-release     "3.23.0"
 │   ├── arch               "aarch64"
@@ -190,7 +219,7 @@ shedos/
 ├── installer/             apkovl baked into the live installer ISO
 │   ├── etc/inittab        tty1 runs wizard.py, ttyS0 is a debug getty
 │   ├── etc/apk/world      live-system packages (parted, python3, py3-rich, ...)
-│   └── opt/shedos-installer/{wizard.py,installer.sh,run-installer.sh}
+│   └── opt/shedos-installer/{wizard.py,installer.sh,detect-disk.sh,run-installer.sh}
 ├── overlay/               extracted onto the target system during install
 │   ├── etc/inittab        tty1 → run-gui.sh, ttyS0 → run-chat.sh
 │   ├── etc/init.d/{shedos-brain,shedos-web}   OpenRC services
@@ -198,16 +227,16 @@ shedos/
 │   ├── opt/shedos/
 │   │   ├── brain.py, rpc_server.py, sessions.py, web_server.py
 │   │   ├── tools.py, anthropic_client.py, config.py, brain_client.py
-│   │   ├── shedos-chat.py, run-chat.sh, run-gui.sh
+│   │   ├── bootstrap_token.py, shedos-chat.py, run-chat.sh, run-gui.sh
 │   │   └── web/           SPA frontend (index.html + app.js + style.css)
 │   ├── root/.xinitrc      openbox + Chromium respawn loop
 │   └── usr/local/bin/shedos-chat  → /opt/shedos/run-chat.sh
-├── vmware/                .vmx template + launch.sh (Fusion VM config)
+├── vmware/                shedos.vmx.tmpl (arm64) + shedos-x86.vmx.tmpl (x86_64) + launch.sh
 ├── docs/                  README assets (logo, screenshots, …)
 ├── .github/
 │   ├── workflows/claude-review.yml   PR-review action driven by Claude
 │   └── CODE_REVIEW.md     standards Claude follows during PR reviews
-└── out/                   (gitignored) shedos-installer.iso
+└── out/                   (gitignored) shedos-installer.iso + shedos-installer-x86_64.iso
 ```
 
 ## Threat model — read this
@@ -230,8 +259,8 @@ Do:
 
 ## Troubleshooting
 
-**The VM boots into the installer every time.** UEFI found no bootloader on
-`/dev/sda` — the previous install failed mid-way, or the disk was wiped.
+**It boots into the installer every time.** UEFI found no bootloader on
+the target disk — the previous install failed mid-way, or the disk was wiped.
 Re-running the installer should fix it. Check the wizard output in the
 Fusion window or `make console` for the underlying error.
 
