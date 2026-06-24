@@ -8,11 +8,25 @@ SYSTEM_VMDK := vmware/shedos-system.vmdk
 SOCKET  := /tmp/shedos.serial
 QEMU_DISK ?= out/shedos-disk-x86.qcow2
 QEMU_MEM  ?= 2G
+# UEFI firmware for QEMU. ShedOS installs an EFI-only bootloader (grub
+# --target=x86_64-efi --removable), matching real Intel/AMD hardware, so QEMU
+# must run UEFI (OVMF) — the default SeaBIOS can't boot the installed disk.
+# Auto-detected across common Homebrew/Linux locations; override with
+# QEMU_OVMF=/path/to/edk2-x86_64-code.fd if your firmware lives elsewhere.
+QEMU_OVMF ?= $(shell for f in \
+	"$$(brew --prefix qemu 2>/dev/null)/share/qemu/edk2-x86_64-code.fd" \
+	/opt/homebrew/share/qemu/edk2-x86_64-code.fd \
+	/usr/local/share/qemu/edk2-x86_64-code.fd \
+	/usr/share/OVMF/OVMF_CODE.fd \
+	/usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
+	/usr/share/edk2/x64/OVMF_CODE.fd ; do \
+	[ -f "$$f" ] && { echo "$$f"; break; }; done)
 
 help:
 	@echo "ShedOS — make targets:"
 	@echo "  make iso           build arm64 ISO + 16GB VMware system disk (set CLAUDE_CODE_OAUTH_TOKEN to bake token)"
-	@echo "  make iso-x86       build x86_64 ISO for QEMU / Intel hardware (SKIP_VMDK=1)"
+	@echo "  make iso-x86       build universal x86_64 ISO (QEMU/VMware + real Intel/AMD HW; SKIP_VMDK=1)"
+	@echo "                     -> dd out/shedos-installer-x86_64.iso to a USB stick to install bare metal"
 	@echo "  make vm            render vmware/shedos.vmx from arm64 template"
 	@echo "  make vm-x86        render vmware/shedos-x86.vmx from x86_64 template"
 	@echo "  make run           arm64: build + open in VMware Fusion"
@@ -53,28 +67,42 @@ qemu-run: $(ISO_X86)
 		echo "qemu-system-x86_64 not found — run: brew install qemu (Mac) or apt install qemu-system-x86 (Linux)"; \
 		exit 1; \
 	}
+	@if [ -z "$(QEMU_OVMF)" ]; then \
+		echo "no OVMF/UEFI firmware found — install it (brew install qemu, or your distro's"; \
+		echo "ovmf/edk2-ovmf package) or pass QEMU_OVMF=/path/to/edk2-x86_64-code.fd."; \
+		echo "ShedOS installs an EFI-only bootloader, so QEMU must run UEFI."; \
+		exit 1; \
+	fi
 	@if [ ! -f $(QEMU_DISK) ]; then \
 		echo "[qemu] creating $(QEMU_DISK)"; \
 		qemu-img create -f qcow2 $(QEMU_DISK) 16G; \
 	fi
-	@echo "[qemu] booting installer ISO — after install+reboot use 'make qemu-serial' to connect"
+	@echo "[qemu] firmware: $(QEMU_OVMF)"
+	@echo "[qemu] the wizard appears in the QEMU window (tty1); the install log also"
+	@echo "[qemu] streams here (serial). After install+reboot run 'make qemu-serial'."
 	qemu-system-x86_64 \
 		-M q35 -m $(QEMU_MEM) \
+		-drive if=pflash,format=raw,readonly=on,file=$(QEMU_OVMF) \
 		-cdrom $(ISO_X86) \
 		-drive file=$(QEMU_DISK),format=qcow2,if=virtio \
 		-netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
 		-serial stdio \
-		-display none \
 		-boot order=dc
 
 qemu-serial:
+	@if [ -z "$(QEMU_OVMF)" ]; then \
+		echo "no OVMF/UEFI firmware found — the installed disk is EFI-only and won't boot"; \
+		echo "under SeaBIOS. Install OVMF or pass QEMU_OVMF=/path/to/edk2-x86_64-code.fd."; \
+		exit 1; \
+	fi
 	@if [ ! -f $(QEMU_DISK) ]; then \
 		echo "$(QEMU_DISK) not found — run 'make qemu-run' first to install"; \
 		exit 1; \
 	fi
-	@echo "[qemu] booting installed disk — serial on stdio"
+	@echo "[qemu] booting installed disk (UEFI: $(QEMU_OVMF)) — serial on stdio"
 	qemu-system-x86_64 \
 		-M q35 -m $(QEMU_MEM) \
+		-drive if=pflash,format=raw,readonly=on,file=$(QEMU_OVMF) \
 		-drive file=$(QEMU_DISK),format=qcow2,if=virtio \
 		-netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
 		-serial stdio \

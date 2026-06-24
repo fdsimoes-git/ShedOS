@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# build.sh — produce a ShedOS installer ISO that wipes /dev/sda and installs
-# Alpine + ShedOS to a persistent disk. On second boot the VM boots from
-# /dev/sda directly.
+# build.sh — produce a ShedOS installer ISO that wipes the target disk and
+# installs Alpine + ShedOS to it persistently. On second boot the machine
+# boots from that disk directly. (arm64 -> VMware Fusion; x86_64 -> a
+# universal ISO for QEMU/VMware AND real Intel/AMD hardware.)
 #
 # Inputs (env):
 #   CLAUDE_CODE_OAUTH_TOKEN   if set, baked into the installer (and from there
@@ -23,7 +24,22 @@ ALPINE_VERSION="$(tr -d '[:space:]' < config/alpine-release)"
 ARCH="${ARCH:-$(tr -d '[:space:]' < config/arch)}"
 ALPINE_MAJOR="${ALPINE_VERSION%.*}"
 SHEDOS_VERSION="$(tr -d '[:space:]' < config/version)"
-ISO_NAME="alpine-virt-${ALPINE_VERSION}-${ARCH}.iso"
+
+# Alpine ISO flavor:
+#   arm64 (aarch64) -> "virt": this target only ever runs under VMware Fusion
+#                      on Apple Silicon, so the stripped virtio-only kernel is
+#                      exactly right and keeps the image small.
+#   x86_64          -> "standard": one universal ISO that boots in QEMU/VMware
+#                      AND on real Intel/AMD hardware. "standard" ships the
+#                      linux-lts kernel + firmware with the full real-hardware
+#                      driver set (NVMe/AHCI/NIC/GPU); "virt" would not boot
+#                      most physical machines. Override with ISO_FLAVOR=... .
+if [[ "$ARCH" == "x86_64" ]]; then
+    ISO_FLAVOR="${ISO_FLAVOR:-standard}"
+else
+    ISO_FLAVOR="${ISO_FLAVOR:-virt}"
+fi
+ISO_NAME="alpine-${ISO_FLAVOR}-${ALPINE_VERSION}-${ARCH}.iso"
 ISO_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MAJOR}/releases/${ARCH}/${ISO_NAME}"
 
 WORK="$HERE/work"
@@ -129,12 +145,24 @@ find "$INSTALLER_STAGE" -type f -name '*.sh' -exec chmod 0755 {} \;
 mkdir -p "$INSTALLER_STAGE/opt/shedos-installer"
 cp "$TARGET_TARBALL" "$INSTALLER_STAGE/opt/shedos-installer/overlay.tar.gz"
 cp config/target-packages.list "$INSTALLER_STAGE/opt/shedos-installer/packages.list"
-# On x86_64, swap the generic framebuffer driver for the VMware-optimised one.
-# xf86-video-vmware is x86-only and not available for arm64.
+# On x86_64 we build ONE universal ISO that must boot real Intel/AMD hardware
+# as well as QEMU/VMware. Swap the VM-only bits for their real-hardware
+# counterparts:
+#   linux-virt          -> linux-lts          (full HW driver set, not virtio-only)
+#   linux-firmware-none  -> linux-firmware     (WiFi/GPU/NIC firmware blobs)
+# Video: we deliberately keep xf86-video-fbdev as a universal fallback and let
+# Xorg auto-select its built-in `modesetting` driver (part of xorg-server, no
+# package) whenever KMS exposes a GPU — that covers Intel/AMD/NVIDIA and the
+# VMware/QEMU virtual GPUs. (xf86-video-vmware would only help inside VMware
+# and breaks on bare metal, so we don't use it.)
 if [[ "$ARCH" == "x86_64" ]]; then
-    log "x86_64: substituting xf86-video-vmware for xf86-video-fbdev in packages.list"
-    sed -i 's/^xf86-video-fbdev$/xf86-video-vmware/' \
-        "$INSTALLER_STAGE/opt/shedos-installer/packages.list"
+    log "x86_64: substituting linux-lts + linux-firmware for the virtio-only kernel in packages.list"
+    # Portable in-place edit: BSD sed (macOS build host) requires an argument
+    # to -i, GNU sed (Linux build host) doesn't. Sidestep both via a temp file.
+    pkgs_file="$INSTALLER_STAGE/opt/shedos-installer/packages.list"
+    sed -e 's/^linux-virt$/linux-lts/' \
+        -e 's/^linux-firmware-none$/linux-firmware/' \
+        "$pkgs_file" > "$pkgs_file.tmp" && mv "$pkgs_file.tmp" "$pkgs_file"
 fi
 
 # Pin Alpine version + arch to whatever config/ says, so installer.sh
@@ -262,7 +290,22 @@ cp "$APKOVL" "$ISO_RW_DIR/localhost.apkovl.tar.gz"
 cp "$APKOVL" "$ISO_RW_DIR/shedos-installer.apkovl.tar.gz"
 
 # --- 9. Patch the bootloader's kernel cmdline -------------------------------
-APKOVL_ARG="apkovl=sr0:iso9660:/shedos-installer.apkovl.tar.gz"
+# Two arch-specific concerns, handled by the python patcher below:
+#
+#   apkovl=  — points Alpine's initramfs at our installer overlay.
+#     arm64: pinned to "sr0" because this target is CD-only under VMware
+#            Fusion and the virt initramfs wouldn't auto-discover it
+#            otherwise (use sr0, NOT "cdrom" — that's a userspace symlink
+#            absent in initramfs).
+#     x86_64: NOT pinned. The image is meant to be `dd`'d to a USB stick and
+#             booted on arbitrary hardware where the boot medium is NOT sr0.
+#             We instead rely on Alpine's native, media-agnostic discovery of
+#             `localhost.apkovl.tar.gz` (dropped at the ISO root in step 8),
+#             which scans whatever device actually booted — CD or USB alike.
+#
+#   console= — arm64 rewrites ttyAMA0 (PL011) to ttyS0 (Fusion's 8250 UART).
+#     x86_64 adds `console=tty0 console=ttyS0,115200` so boot output shows on
+#     both a physical monitor AND the serial line (QEMU `-serial stdio`).
 EDITED=0
 for cfg in \
     "$ISO_RW_DIR/boot/grub/grub.cfg" \
@@ -272,14 +315,19 @@ for cfg in \
     "$ISO_RW_DIR/boot/syslinux/extlinux.conf"; do
     if [[ -f "$cfg" ]]; then
         log "patching $cfg"
-        python3 - "$cfg" "$APKOVL_ARG" <<'PY'
+        python3 - "$cfg" "$ARCH" <<'PY'
 import re, sys
-path, arg = sys.argv[1], sys.argv[2]
+path, arch = sys.argv[1], sys.argv[2]
 with open(path) as f:
     src = f.read()
-src = re.sub(r'console=ttyAMA0(,\d+)?', 'console=ttyS0,115200', src)
+if arch == "x86_64":
+    extra = " console=tty0 console=ttyS0,115200"
+else:
+    # arm64: 8250 UART + pin the apkovl to the CD device.
+    src = re.sub(r'console=ttyAMA0(,\d+)?', 'console=ttyS0,115200', src)
+    extra = " apkovl=sr0:iso9660:/shedos-installer.apkovl.tar.gz"
 def patch(m):
-    return m.group(0).rstrip() + f" {arg}\n"
+    return m.group(0).rstrip() + extra + "\n"
 new = re.sub(r'(?m)^\s*linux\s+.*$\n?', patch, src)
 new = re.sub(r'(?m)^\s*append\s+.*$\n?', patch, new)
 with open(path, 'w') as f:
@@ -325,8 +373,11 @@ if [[ -f "$SYSTEM_VMDK" ]]; then
 fi
 printf '\n'
 if [[ "$ARCH" == "x86_64" ]]; then
-    printf '  Next (QEMU):  make qemu-run    # boot + install in QEMU\n'
-    printf '                make qemu-serial # attach to serial console\n'
+    printf '  Test (QEMU):   make qemu-run     # boot + install in QEMU\n'
+    printf '                 make qemu-serial  # attach to serial console afterwards\n'
+    printf '  Real Intel/AMD hardware:\n'
+    printf '                 sudo dd if=%s of=/dev/diskN bs=4m  # write to USB, then boot the target\n' "$OUT_ISO"
+    printf '                 (the installer auto-detects the largest fixed disk and confirms before erasing)\n'
 else
     printf '  Next:   make run        # boot ISO -> auto-installs onto disk -> reboots into ShedOS\n'
     printf '          make console    # talk to the brain over the serial pipe\n'

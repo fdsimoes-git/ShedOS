@@ -1,9 +1,9 @@
 #!/bin/sh
 # ShedOS installer — runs on first boot from the ISO. Lays Alpine + ShedOS
-# down on /dev/sda as a persistent install, then reboots.
+# down on the auto-detected target disk as a persistent install, then reboots.
 #
-# Idempotency: if /dev/sda already has a labeled ShedOS root partition with
-# /etc/alpine-release populated, the installer assumes we're already
+# Idempotency: if the target disk already has a labeled ShedOS root partition
+# with /etc/alpine-release populated, the installer assumes we're already
 # installed and just reboots (UEFI should boot from disk in that case).
 #
 # Re-entry guard: if getty respawns the script after a crash, the lock
@@ -29,10 +29,27 @@ fi
 echo $$ > "$LOCKFILE"
 trap 'rc=$?; echo; echo "[shedos-install] script exiting (rc=$rc) — DO NOT respawn (getty wait)"; if [ $rc -ne 0 ]; then echo "[shedos-install] FAILURE. Sleeping forever (Ctrl-Alt-F2 to a rescue tty if you want to debug)."; while :; do sleep 3600; done; fi; rm -f "$LOCKFILE"' EXIT
 
-DISK=/dev/sda
-ESP=/dev/sda1
-ROOT=/dev/sda2
-HOME_PART=/dev/sda3
+# Install target disk. Auto-detected (largest fixed, non-removable disk that
+# isn't the live boot medium) so this works on real hardware (NVMe/SATA),
+# VMware (sda) and QEMU (virtio vda) alike. DISK can be overridden via the
+# environment for testing. detect-disk.sh is the shared source of truth — the
+# wizard shows the same device on its confirm screen.
+DETECT=/opt/shedos-installer/detect-disk.sh
+# Invoke via `sh` (not as an executable) so detection still runs if the exec
+# bit didn't survive the build/extract path.
+DISK="${DISK:-$( [ -r "$DETECT" ] && sh "$DETECT" 2>/dev/null )}"
+[ -z "$DISK" ] && [ -b /dev/sda ] && DISK=/dev/sda   # last-ditch fallback
+[ -n "$DISK" ] || die "no install-target disk found (only removable / boot media attached?)"
+
+# Partition device names: NVMe/mmc need a 'p' separator (nvme0n1p1), SATA/virtio
+# do not (sda1, vda1). Key off a trailing digit in the disk name.
+case "$DISK" in
+    *[0-9]) PSEP=p ;;
+    *)      PSEP=  ;;
+esac
+ESP="${DISK}${PSEP}1"
+ROOT="${DISK}${PSEP}2"
+HOME_PART="${DISK}${PSEP}3"
 MNT=/mnt
 
 OVERLAY_TARBALL=/opt/shedos-installer/overlay.tar.gz
@@ -65,22 +82,23 @@ banner() {
 
 ╔══════════════════════════════════════════════════════════════╗
 ║  ShedOS installer                                            ║
-║  About to install Alpine $ALPINE_VERSION + ShedOS to /dev/sda                ║
-║  Partition scheme:                                           ║
-║    /dev/sda1   256 MiB   FAT32   /boot/efi                   ║
-║    /dev/sda2    4 GiB    ext4    /                           ║
-║    /dev/sda3    rest     ext4    /home                       ║
-║                                                              ║
-║  ALL DATA ON /dev/sda WILL BE ERASED.                        ║
 ╚══════════════════════════════════════════════════════════════╝
+  About to install Alpine $ALPINE_VERSION + ShedOS to: $DISK
+  Partition scheme:
+    ${ESP}   256 MiB   FAT32   /boot/efi
+    ${ROOT}    4 GiB    ext4    /
+    ${HOME_PART}    rest     ext4    /home
+
+  *** ALL DATA ON $DISK WILL BE ERASED. ***
 
 BANNER
 }
 
 already_installed() {
-    # Best-effort: probe /dev/sda2 for ext4 with alpine-release inside.
-    # ext4 may not be auto-loaded on alpine-virt; modprobe before we mount
-    # or the check returns a false negative and we'd wipe a valid install.
+    # Best-effort: probe the target's root partition for ext4 with
+    # alpine-release inside. ext4 may not be auto-loaded on the live ISO;
+    # modprobe before we mount or the check returns a false negative and
+    # we'd wipe a valid install.
     modprobe ext4 2>/dev/null || true
     blkid "$ROOT" 2>/dev/null | grep -q 'TYPE="ext4"' || return 1
     mount -t ext4 "$ROOT" "$MNT" 2>/dev/null || return 1
@@ -118,10 +136,10 @@ wait_for_network() {
 }
 
 partition_disk() {
-    # If a previous (failed) install left /dev/sda partitions mounted (e.g.,
+    # If a previous (failed) install left target partitions mounted (e.g.,
     # nlplug-findfs scanning), drop them before partitioning.
     say "ensuring $DISK is not in use"
-    for p in /dev/sda1 /dev/sda2 /dev/sda3 /dev/sda4; do
+    for p in "$ESP" "$ROOT" "$HOME_PART" "${DISK}${PSEP}4"; do
         if mount | grep -q "^$p "; then
             say "  unmounting $p (was busy)"
             umount -f "$p" 2>/dev/null || umount -l "$p" 2>/dev/null || true
@@ -429,7 +447,7 @@ do_install() {
     unmount_target
 
     say "==================================================================="
-    say "INSTALL COMPLETE. Rebooting in 5s (VM should boot from /dev/sda)..."
+    say "INSTALL COMPLETE. Rebooting in 5s (should boot from $DISK)..."
     say "==================================================================="
     sleep 5
     sync
@@ -446,7 +464,7 @@ do_install() {
 
 if already_installed; then
     say "found existing ShedOS install on $ROOT — booting that instead"
-    say "if you wanted to REinstall, wipe /dev/sda first (parted /dev/sda mklabel gpt)"
+    say "if you wanted to REinstall, wipe $DISK first (parted $DISK mklabel gpt)"
     say "rebooting in 5s..."
     sleep 5
     reboot
