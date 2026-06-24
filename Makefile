@@ -8,6 +8,11 @@ SYSTEM_VMDK := vmware/shedos-system.vmdk
 SOCKET  := /tmp/shedos.serial
 QEMU_DISK ?= out/shedos-disk-x86.qcow2
 QEMU_MEM  ?= 2G
+# Guest vCPUs. x86-on-Apple-Silicon is full TCG emulation (CPU-bound, not
+# RAM-bound), so more vCPUs help multi-threaded guest work (Chromium/X) far more
+# than extra RAM does. Default 4 leaves host headroom on a 6+ P-core machine;
+# try QEMU_CPUS=6 to use all P-cores. (More RAM than ~4G buys nothing here.)
+QEMU_CPUS ?= 4
 # UEFI firmware for QEMU. ShedOS installs an EFI-only bootloader (grub
 # --target=x86_64-efi --removable), matching real Intel/AMD hardware, so QEMU
 # must run UEFI (OVMF) — the default SeaBIOS can't boot the installed disk.
@@ -33,7 +38,7 @@ help:
 	@echo "  make qemu-run      x86_64: boot ISO in QEMU and install to $(QEMU_DISK)"
 	@echo "  make qemu-serial   attach to the installed system's serial chat client (headless)"
 	@echo "  make qemu-gui      boot the installed system with the graphical ShedOS GUI in a window"
-	@echo "                     (heavy under x86 emulation; try QEMU_MEM=4G)"
+	@echo "                     (heavy under x86 emulation; tune with QEMU_CPUS=6 QEMU_MEM=4G)"
 	@echo "  make tui           full TUI client via socat raw mode"
 	@echo "  make console       raw serial pipe (nc -U) — debug-only"
 	@echo "  make ssh           ssh root@<vm-ip> using the key baked into the ISO"
@@ -108,7 +113,7 @@ qemu-run: $(ISO_X86)
 	@echo "[qemu] the wizard appears in the QEMU window (tty1); the install log also"
 	@echo "[qemu] streams here (serial). After install+reboot run 'make qemu-serial'."
 	qemu-system-x86_64 \
-		-M q35 -m $(QEMU_MEM) \
+		-M q35 -m $(QEMU_MEM) -smp $(QEMU_CPUS) \
 		-drive if=pflash,format=raw,readonly=on,file=$(QEMU_OVMF) \
 		-cdrom $(ISO_X86) \
 		-drive file=$(QEMU_DISK),format=qcow2,if=virtio \
@@ -128,7 +133,7 @@ qemu-serial:
 	fi
 	@echo "[qemu] booting installed disk (UEFI: $(QEMU_OVMF)) — serial on stdio"
 	qemu-system-x86_64 \
-		-M q35 -m $(QEMU_MEM) \
+		-M q35 -m $(QEMU_MEM) -smp $(QEMU_CPUS) \
 		-drive if=pflash,format=raw,readonly=on,file=$(QEMU_OVMF) \
 		-drive file=$(QEMU_DISK),format=qcow2,if=virtio \
 		-netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
@@ -157,7 +162,7 @@ qemu-gui:
 	@echo "[qemu] booting installed disk with GUI (virtio-gpu) — SLOW under emulation."
 	@echo "[qemu] GUI is in the QEMU window; serial/log + chat client on this terminal."
 	qemu-system-x86_64 \
-		-M q35 -m $(QEMU_MEM) \
+		-M q35 -m $(QEMU_MEM) -smp $(QEMU_CPUS) \
 		-drive if=pflash,format=raw,readonly=on,file=$(QEMU_OVMF) \
 		-drive file=$(QEMU_DISK),format=qcow2,if=virtio \
 		-netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
