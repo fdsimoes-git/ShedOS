@@ -30,12 +30,35 @@ Failure modes:
 import getpass
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
 WIZARD_ENV = "/tmp/shedos-wizard.env"
 INSTALLER = "/opt/shedos-installer/installer.sh"
+DETECT_DISK = "/opt/shedos-installer/detect-disk.sh"
 VERSION_PATH = "/etc/shedos/version"
+
+
+def _target_disk():
+    """The disk the installer will wipe, via the shared detect-disk.sh so the
+    wizard and installer.sh can never show different targets. Falls back to a
+    neutral phrase when detection isn't available (e.g. hand-run for testing)."""
+    try:
+        # Invoke via `sh` so we don't depend on the exec bit surviving the
+        # build/extract path (the working volume may not preserve it).
+        out = subprocess.run(
+            ["/bin/sh", DETECT_DISK], capture_output=True, text=True, timeout=15
+        )
+        disk = out.stdout.strip()
+        if out.returncode == 0 and disk:
+            return disk
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "the target disk (auto-detected at install time)"
+
+
+TARGET_DISK = _target_disk()
 
 
 def _shedos_version():
@@ -302,8 +325,8 @@ def _make_app():
                     with Container(classes="pane-body"):
                         yield Static("Welcome", classes="pane-title")
                         yield Static(
-                            "This utility installs Alpine Linux + ShedOS to /dev/sda.\n"
-                            "All data on /dev/sda will be ERASED.\n\n"
+                            f"This utility installs Alpine Linux + ShedOS to {TARGET_DISK}.\n"
+                            f"All data on {TARGET_DISK} will be ERASED.\n\n"
                             "Use ← / → or the number keys (1..5) to switch tabs.\n"
                             "Use ↑ / ↓ to move between fields. Enter to confirm.\n"
                             "Esc cancels and reboots. F10 starts the install.\n\n"
@@ -416,9 +439,10 @@ def _make_app():
                 f"  Token         {tok_disp}",
                 f"  Persona       {persona_label}",
                 f"  Style         {style_disp}",
+                f"  Target disk   {TARGET_DISK}",
                 "",
-                "  /dev/sda will be partitioned and ext4-formatted.",
-                "  ALL EXISTING DATA on /dev/sda will be ERASED.",
+                f"  {TARGET_DISK} will be partitioned and ext4-formatted.",
+                f"  ALL EXISTING DATA on {TARGET_DISK} will be ERASED.",
             ]
             self.query_one("#summary", Static).update("\n".join(lines))
 
@@ -587,8 +611,8 @@ def run_rich_wizard():
         return raw
 
     panel("ShedOS installer",
-          "Welcome. This will install Alpine Linux + ShedOS to /dev/sda.\n"
-          "All data on /dev/sda will be erased.\n\n"
+          f"Welcome. This will install Alpine Linux + ShedOS to {TARGET_DISK}.\n"
+          f"All data on {TARGET_DISK} will be erased.\n\n"
           "The wizard collects a few preferences, then hands off to the\n"
           "installer (~3-5 minutes).",
           style="cyan")
@@ -616,6 +640,7 @@ def run_rich_wizard():
         f"  Token         {tok_disp}",
         f"  Persona       {persona}",
         f"  Style         terse={style['terse']}  formal={style['formal']}  emojis={style['emojis']}",
+        f"  Target disk   {TARGET_DISK}  (ALL DATA WILL BE ERASED)",
     ]
     panel("Confirm install", "\n".join(rows), style="yellow")
     if not ask_yn("Proceed?", default_yes=True):

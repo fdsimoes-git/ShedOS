@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-ShedOS is an Alpine-Linux–based custom OS for VMware Fusion arm64 (Apple Silicon) where Claude Opus is the **only** user-facing process. The system installs to a persistent disk via a one-shot ISO, then on every boot the user interacts with Claude through:
+ShedOS is an Alpine-Linux–based custom OS where Claude Opus is the **only** user-facing process. Two build targets:
+
+- **arm64 (aarch64)** — runs under VMware Fusion on Apple Silicon. Uses the `alpine-virt` (virtio-only) kernel. This is the original/primary target. Built with `make iso`.
+- **x86_64** — one **universal** ISO that boots in QEMU/VMware *and* installs onto real Intel/AMD hardware. Uses the `alpine-standard` ISO + `linux-lts` kernel + `linux-firmware` for the full real-hardware driver set, and relies on Xorg's built-in `modesetting` driver for the GPU. Built with `make iso-x86`; `dd` the resulting `out/shedos-installer-x86_64.iso` to a USB stick to install bare metal. The installer auto-detects the target disk (largest fixed disk — NVMe/SATA/virtio) instead of assuming `/dev/sda`.
+
+The system installs to a persistent disk via a one-shot ISO, then on every boot the user interacts with Claude through:
 
 - **`tty1` (Fusion window)** — Chromium in app/kiosk mode showing a SPA chat GUI with tabs, markdown rendering, and "render tabs" for images / PDFs / web pages
 - **`ttyS0` (Unix-socket pipe `/tmp/shedos.serial`)** — `shedos-chat.py` minimal chat client (v0.7.0+, replaces the Textual TUI), reachable via `make tui` from the host
@@ -56,8 +61,11 @@ Upgrades from pre-v0.7.0 also leave two unused files behind: `/var/lib/shedos/th
 # Token in env is required for the brain to authenticate. Get one with `claude setup-token`.
 export CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat01-...'
 
-make iso          # builds out/shedos-installer.iso (+ creates 16 GB system VMDK if missing)
+make iso          # arm64: builds out/shedos-installer.iso (+ creates 16 GB system VMDK if missing)
+make iso-x86      # x86_64: builds the universal out/shedos-installer-x86_64.iso (QEMU/VMware + bare metal)
 make run          # build + boot the VM in Fusion (auto-installs on first boot via wizard)
+make qemu-run     # x86_64: boot+install the ISO in QEMU (needs OVMF/UEFI firmware + `brew install qemu`)
+make qemu-serial  # x86_64: attach to the installed system's serial console (the chat client)
 make tui          # connect to the chat client over the serial socket (needs `brew install socat`)
 make console      # raw `nc -U` serial pipe — debug-only; ttyS0 hosts the chat client which needs a PTY
 make ssh          # ssh root@<vm-ip> using ~/.ssh/id_ed25519
@@ -86,12 +94,15 @@ ssh root@<vm-ip> 'rc-service shedos-web restart'
 
 `build.sh` does the actual work; `make iso` just invokes it. Key non-obvious steps:
 
-- Downloads `alpine-virt-3.23.0-aarch64.iso` and **patches its grub.cfg** to add `apkovl=sr0:iso9660:/<name>.apkovl.tar.gz` (use `sr0`, NOT `cdrom` — the latter is a userspace symlink that doesn't exist in initramfs)
-- Rewrites `console=ttyAMA0` to `console=ttyS0,115200` because Fusion emulates an 8250-style UART, not ARM PL011
+- Arch-driven ISO flavor: arm64 downloads `alpine-virt-<ver>-aarch64.iso`; x86_64 (`ARCH=x86_64`) downloads `alpine-standard-<ver>-x86_64.iso` so the live env + installed kernel have full real-hardware drivers. Override with `ISO_FLAVOR=...`.
+- **arm64 grub.cfg patch**: adds `apkovl=sr0:iso9660:/<name>.apkovl.tar.gz` (use `sr0`, NOT `cdrom` — the latter is a userspace symlink that doesn't exist in initramfs) and rewrites `console=ttyAMA0` → `console=ttyS0,115200` (Fusion emulates an 8250-style UART, not ARM PL011)
+- **x86_64 grub/syslinux patch**: does NOT pin `apkovl=` — the image is meant to be `dd`'d to USB and booted on arbitrary hardware where the boot medium isn't `sr0`, so it relies on Alpine's native auto-discovery of `localhost.apkovl.tar.gz` (dropped at the ISO root) which scans whatever device actually booted. Adds `console=tty0 console=ttyS0,115200` so boot shows on a monitor *and* the serial line.
+- x86_64 also swaps `linux-virt`→`linux-lts` and `linux-firmware-none`→`linux-firmware` in the target package list (keeps `xf86-video-fbdev` as a fallback; Xorg auto-selects its built-in `modesetting` driver for real GPUs)
 - Tar uses `--uid 0 --gid 0 --uname root --gname root` so apkovl files end up owned by root in the guest (otherwise sshd's StrictModes rejects /root/.ssh/authorized_keys)
 - Writes `rootfstype=ext4 rootwait` into `GRUB_CMDLINE_LINUX_DEFAULT` — busybox `mount` can't autodetect a filesystem from `UUID=...`, so without `rootfstype=ext4` the initramfs panics with a misleading "No such file or directory" trying to mount root
 - Pre-creates `vmware/shedos-system.vmdk` (16 GB growable) via `/Applications/VMware Fusion.app/Contents/Library/vmware-vdiskmanager` if missing
 - Bakes `$CLAUDE_CODE_OAUTH_TOKEN` (preflighted with a real `/v1/messages` call) and `~/.ssh/id_*.pub` into the installer apkovl
+- Token changes force a rebuild even when nothing else changed: the `iso`/`iso-x86` targets depend on `work/.token-hash`, a stamp holding `sha256($CLAUDE_CODE_OAUTH_TOKEN)` (hash only, never the secret; in gitignored `work/`). Make can't see env vars, so without this an up-to-date ISO would silently ship a stale/absent token. To force a bake regardless, run `build.sh` directly (it always rebuilds): `OUT_ISO=… ARCH=… ./build.sh`
 
 ## Installer wizard (v0.5.0+)
 
@@ -111,7 +122,7 @@ run-installer.sh ──→ apk add python3 py3-rich py3-pip open-vm-tools
                                                               (parses the env in apply_overlay)
 ```
 
-`installer.sh` keeps doing the actual disk install (parted → mkfs → `apk --root` → chroot → grub-install → reboot) and holds `/run/shedos-installer.lock` for the duration so concurrent spawns can't race on `/dev/sda`. The wizard is a thin frontend; if it crashes or is skipped, `installer.sh` falls back to baked-in defaults (default persona, terse style, ISO-baked token if any).
+`installer.sh` keeps doing the actual disk install (parted → mkfs → `apk --root` → chroot → grub-install → reboot) and holds `/run/shedos-installer.lock` for the duration so concurrent spawns can't race on the target disk. The wizard is a thin frontend; if it crashes or is skipped, `installer.sh` falls back to baked-in defaults (default persona, terse style, ISO-baked token if any).
 
 `open-vm-tools` is installed on both the live ISO and the target system so Fusion's host→guest clipboard channel works (paste your OAuth token into the wizard instead of typing 100+ chars). `vmtoolsd` is registered to start at boot via OpenRC's `default` runlevel.
 
@@ -158,6 +169,7 @@ shedos/
 │   └── opt/shedos-installer/
 │       ├── wizard.py                interactive preferences UI (rich + getpass)
 │       ├── installer.sh             actual disk install (parted/mkfs/apk/chroot/grub)
+│       ├── detect-disk.sh           pick the install-target disk (largest fixed, non-boot)
 │       └── run-installer.sh         exec wizard.py
 ├── vmware/               .vmx template + launch.sh + (gitignored) Fusion runtime files
 └── out/                  (gitignored) shedos-installer.iso

@@ -1,19 +1,19 @@
 # /etc/inittab — ShedOS INSTALLER (on the live ISO)
 #
-# tty1 (the visible Fusion window) runs the wizard — that's what a fresh
-# user sees on first boot. ttyS0 stays as a plain getty so it's available
-# for debugging via `make console` from the Mac (you can read the install
-# log there too if anything goes wrong).
+# tty1 (the physical monitor, or the VMware Fusion window) runs the wizard —
+# that's what a fresh user sees on first boot. ttyS0 stays as a plain getty so
+# it's available for debugging via `make console` from the Mac / QEMU serial
+# (you can read the install log there too if anything goes wrong).
 #
 # installer.sh holds /run/shedos-installer.lock for the duration of the
 # install, so even if a second instance ever spawned (e.g. via tty2) it
-# would detect the lock and sleep instead of racing on /dev/sda.
+# would detect the lock and sleep instead of racing on the target disk.
 
 ::sysinit:/sbin/openrc sysinit
 ::sysinit:/sbin/openrc boot
 ::wait:/sbin/openrc default
 
-# Wizard + installer run on tty1 (visible to the user in the Fusion window).
+# Wizard + installer run on tty1 (the physical monitor / Fusion window).
 tty1::respawn:/sbin/getty -n -l /opt/shedos-installer/run-installer.sh -i 38400 tty1
 # ttyS0: plain getty for debugging — `make console` lands you in a shell.
 ttyS0::respawn:/sbin/getty -L 115200 ttyS0 vt100

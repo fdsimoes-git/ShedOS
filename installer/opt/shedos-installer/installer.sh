@@ -1,9 +1,9 @@
 #!/bin/sh
 # ShedOS installer — runs on first boot from the ISO. Lays Alpine + ShedOS
-# down on /dev/sda as a persistent install, then reboots.
+# down on the auto-detected target disk as a persistent install, then reboots.
 #
-# Idempotency: if /dev/sda already has a labeled ShedOS root partition with
-# /etc/alpine-release populated, the installer assumes we're already
+# Idempotency: if the target disk already has a labeled ShedOS root partition
+# with /etc/alpine-release populated, the installer assumes we're already
 # installed and just reboots (UEFI should boot from disk in that case).
 #
 # Re-entry guard: if getty respawns the script after a crash, the lock
@@ -29,10 +29,29 @@ fi
 echo $$ > "$LOCKFILE"
 trap 'rc=$?; echo; echo "[shedos-install] script exiting (rc=$rc) — DO NOT respawn (getty wait)"; if [ $rc -ne 0 ]; then echo "[shedos-install] FAILURE. Sleeping forever (Ctrl-Alt-F2 to a rescue tty if you want to debug)."; while :; do sleep 3600; done; fi; rm -f "$LOCKFILE"' EXIT
 
-DISK=/dev/sda
-ESP=/dev/sda1
-ROOT=/dev/sda2
-HOME_PART=/dev/sda3
+# Install target disk. Auto-detected (largest fixed, non-removable disk that
+# isn't the live boot medium) so this works on real hardware (NVMe/SATA),
+# VMware (sda) and QEMU (virtio vda) alike. DISK can be overridden via the
+# environment for testing. detect-disk.sh is the shared source of truth — the
+# wizard shows the same device on its confirm screen.
+DETECT=/opt/shedos-installer/detect-disk.sh
+# Invoke via `sh` (not as an executable) so detection still runs if the exec
+# bit didn't survive the build/extract path.
+DISK="${DISK:-$( [ -r "$DETECT" ] && sh "$DETECT" 2>/dev/null )}"
+# NO /dev/sda fallback on purpose: detect-disk.sh returns empty only when every
+# disk was excluded (removable / the boot medium), so guessing /dev/sda here
+# could target the very USB stick we booted from. Fail safe instead.
+[ -n "$DISK" ] || die "no install-target disk found (only removable / boot media attached?)"
+
+# Partition device names: NVMe/mmc need a 'p' separator (nvme0n1p1), SATA/virtio
+# do not (sda1, vda1). Key off a trailing digit in the disk name.
+case "$DISK" in
+    *[0-9]) PSEP=p ;;
+    *)      PSEP=  ;;
+esac
+ESP="${DISK}${PSEP}1"
+ROOT="${DISK}${PSEP}2"
+HOME_PART="${DISK}${PSEP}3"
 MNT=/mnt
 
 OVERLAY_TARBALL=/opt/shedos-installer/overlay.tar.gz
@@ -51,27 +70,37 @@ fi
 [ -n "$ALPINE_VERSION" ] && [ -n "$ARCH" ] \
     || die "ALPINE_VERSION/ARCH not set and could not be derived"
 
+# Map Alpine ARCH to grub-install target and EFI boot binary name.
+# These are written to /tmp inside the target before chroot so the chroot
+# script can source them (the heredoc uses <<'CHROOT' so outer vars don't expand).
+case "$ARCH" in
+    aarch64) GRUB_TARGET="arm64-efi";  BOOT_EFI="BOOTAA64.EFI" ;;
+    x86_64)  GRUB_TARGET="x86_64-efi"; BOOT_EFI="BOOTX64.EFI"  ;;
+    *)       GRUB_TARGET="${ARCH}-efi"; BOOT_EFI="BOOTX64.EFI"  ;;
+esac
+
 banner() {
     cat <<BANNER
 
 ╔══════════════════════════════════════════════════════════════╗
 ║  ShedOS installer                                            ║
-║  About to install Alpine $ALPINE_VERSION + ShedOS to /dev/sda                ║
-║  Partition scheme:                                           ║
-║    /dev/sda1   256 MiB   FAT32   /boot/efi                   ║
-║    /dev/sda2    4 GiB    ext4    /                           ║
-║    /dev/sda3    rest     ext4    /home                       ║
-║                                                              ║
-║  ALL DATA ON /dev/sda WILL BE ERASED.                        ║
 ╚══════════════════════════════════════════════════════════════╝
+  About to install Alpine $ALPINE_VERSION + ShedOS to: $DISK
+  Partition scheme:
+    ${ESP}   256 MiB   FAT32   /boot/efi
+    ${ROOT}    4 GiB    ext4    /
+    ${HOME_PART}    rest     ext4    /home
+
+  *** ALL DATA ON $DISK WILL BE ERASED. ***
 
 BANNER
 }
 
 already_installed() {
-    # Best-effort: probe /dev/sda2 for ext4 with alpine-release inside.
-    # ext4 may not be auto-loaded on alpine-virt; modprobe before we mount
-    # or the check returns a false negative and we'd wipe a valid install.
+    # Best-effort: probe the target's root partition for ext4 with
+    # alpine-release inside. ext4 may not be auto-loaded on the live ISO;
+    # modprobe before we mount or the check returns a false negative and
+    # we'd wipe a valid install.
     modprobe ext4 2>/dev/null || true
     blkid "$ROOT" 2>/dev/null | grep -q 'TYPE="ext4"' || return 1
     mount -t ext4 "$ROOT" "$MNT" 2>/dev/null || return 1
@@ -109,10 +138,10 @@ wait_for_network() {
 }
 
 partition_disk() {
-    # If a previous (failed) install left /dev/sda partitions mounted (e.g.,
+    # If a previous (failed) install left target partitions mounted (e.g.,
     # nlplug-findfs scanning), drop them before partitioning.
     say "ensuring $DISK is not in use"
-    for p in /dev/sda1 /dev/sda2 /dev/sda3 /dev/sda4; do
+    for p in "$ESP" "$ROOT" "$HOME_PART" "${DISK}${PSEP}4"; do
         if mount | grep -q "^$p "; then
             say "  unmounting $p (was busy)"
             umount -f "$p" 2>/dev/null || umount -l "$p" 2>/dev/null || true
@@ -299,9 +328,16 @@ chroot_setup() {
     mount --bind /dev "$MNT/dev"
     mount -t devpts devpts "$MNT/dev/pts" 2>/dev/null || true
 
+    # Pass arch-specific bootloader vars into the chroot via a temp env file.
+    # The heredoc below uses <<'CHROOT' (single-quoted) so outer shell variables
+    # don't expand inside — we need an explicit file to cross the boundary.
+    printf 'GRUB_TARGET="%s"\nBOOT_EFI="%s"\n' "$GRUB_TARGET" "$BOOT_EFI" \
+        > "$MNT/tmp/shedos-arch.env"
+
     chroot "$MNT" /bin/sh <<'CHROOT' 2>&1
 set -e
 say() { printf '\n\033[1;34m[shedos-install:chroot]\033[0m %s\n' "$*"; }
+. /tmp/shedos-arch.env
 
 say "enabling OpenRC services"
 # Use eudev (udev) instead of busybox mdev — Xorg requires udev for
@@ -335,12 +371,12 @@ GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"
 GRUB_DISABLE_OS_PROBER=true
 GRUB
 
-say "grub-install --target=arm64-efi --efi-directory=/boot/efi --removable --no-nvram"
+say "grub-install --target=$GRUB_TARGET --efi-directory=/boot/efi --removable --no-nvram"
 # Capture to a file so a non-zero exit from grub-install isn't masked by
 # the success of `tail` (set -e + pipelines). Then tail the captured log
 # only after the command's exit status has been preserved.
 grub_log=$(mktemp)
-if ! grub-install --target=arm64-efi --efi-directory=/boot/efi \
+if ! grub-install --target="$GRUB_TARGET" --efi-directory=/boot/efi \
                   --removable --no-nvram --verbose >"$grub_log" 2>&1; then
     say "grub-install FAILED. Last 40 lines:"
     tail -40 "$grub_log"
@@ -350,9 +386,9 @@ fi
 tail -20 "$grub_log"
 rm -f "$grub_log"
 
-say "verifying BOOTAA64.EFI is in place"
-[ -f /boot/efi/EFI/BOOT/BOOTAA64.EFI ] \
-    || { say "  /boot/efi/EFI/BOOT/BOOTAA64.EFI missing — install will not boot from disk!"; exit 1; }
+say "verifying $BOOT_EFI is in place"
+[ -f "/boot/efi/EFI/BOOT/$BOOT_EFI" ] \
+    || { say "  /boot/efi/EFI/BOOT/$BOOT_EFI missing — install will not boot from disk!"; exit 1; }
 ls -la /boot/efi/EFI/BOOT/
 
 say "grub-mkconfig"
@@ -413,7 +449,7 @@ do_install() {
     unmount_target
 
     say "==================================================================="
-    say "INSTALL COMPLETE. Rebooting in 5s (VM should boot from /dev/sda)..."
+    say "INSTALL COMPLETE. Rebooting in 5s (should boot from $DISK)..."
     say "==================================================================="
     sleep 5
     sync
@@ -430,7 +466,7 @@ do_install() {
 
 if already_installed; then
     say "found existing ShedOS install on $ROOT — booting that instead"
-    say "if you wanted to REinstall, wipe /dev/sda first (parted /dev/sda mklabel gpt)"
+    say "if you wanted to REinstall, wipe $DISK first (parted $DISK mklabel gpt)"
     say "rebooting in 5s..."
     sleep 5
     reboot
