@@ -1,4 +1,4 @@
-.PHONY: iso iso-x86 run vm vm-x86 tui console qemu-run qemu-serial clean distclean help wipe-system
+.PHONY: iso iso-x86 run vm vm-x86 tui console qemu-run qemu-serial qemu-gui clean distclean help wipe-system
 
 ISO     := out/shedos-installer.iso
 ISO_X86 := out/shedos-installer-x86_64.iso
@@ -31,7 +31,9 @@ help:
 	@echo "  make vm-x86        render vmware/shedos-x86.vmx from x86_64 template"
 	@echo "  make run           arm64: build + open in VMware Fusion"
 	@echo "  make qemu-run      x86_64: boot ISO in QEMU and install to $(QEMU_DISK)"
-	@echo "  make qemu-serial   attach to QEMU serial console (after install + reboot)"
+	@echo "  make qemu-serial   attach to the installed system's serial chat client (headless)"
+	@echo "  make qemu-gui      boot the installed system with the graphical ShedOS GUI in a window"
+	@echo "                     (heavy under x86 emulation; try QEMU_MEM=4G)"
 	@echo "  make tui           full TUI client via socat raw mode"
 	@echo "  make console       raw serial pipe (nc -U) — debug-only"
 	@echo "  make ssh           ssh root@<vm-ip> using the key baked into the ISO"
@@ -132,6 +134,36 @@ qemu-serial:
 		-netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
 		-serial stdio \
 		-display none
+
+# Same as qemu-serial but with a graphical window so you can see the actual
+# ShedOS GUI (Chromium kiosk on tty1), not just the serial chat client.
+#   -vga virtio   : virtio-gpu — the guest's built-in `modesetting` Xorg driver
+#                   drives it via the virtio_gpu KMS module (in linux-lts).
+#   qemu-xhci + usb-tablet : absolute pointer so the mouse works without grab.
+#   -serial stdio : kept, so boot/log + the chat client are still on this term.
+# NOTE: x86 QEMU on Apple Silicon is full TCG emulation, so Chromium will be
+# SLOW (it renders, but don't expect snappy interaction — the serial chat is
+# far more responsive). Bump RAM with QEMU_MEM=4G for the GUI.
+qemu-gui:
+	@if [ -z "$(QEMU_OVMF)" ]; then \
+		echo "no OVMF/UEFI firmware found — the installed disk is EFI-only and won't boot"; \
+		echo "under SeaBIOS. Install OVMF or pass QEMU_OVMF=/path/to/edk2-x86_64-code.fd."; \
+		exit 1; \
+	fi
+	@if [ ! -f $(QEMU_DISK) ]; then \
+		echo "$(QEMU_DISK) not found — run 'make qemu-run' first to install"; \
+		exit 1; \
+	fi
+	@echo "[qemu] booting installed disk with GUI (virtio-gpu) — SLOW under emulation."
+	@echo "[qemu] GUI is in the QEMU window; serial/log + chat client on this terminal."
+	qemu-system-x86_64 \
+		-M q35 -m $(QEMU_MEM) \
+		-drive if=pflash,format=raw,readonly=on,file=$(QEMU_OVMF) \
+		-drive file=$(QEMU_DISK),format=qcow2,if=virtio \
+		-netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+		-vga virtio \
+		-device qemu-xhci -device usb-tablet \
+		-serial stdio
 
 tui:
 	@if [ ! -S $(SOCKET) ]; then \
