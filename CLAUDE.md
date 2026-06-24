@@ -102,6 +102,7 @@ ssh root@<vm-ip> 'rc-service shedos-web restart'
 - Writes `rootfstype=ext4 rootwait` into `GRUB_CMDLINE_LINUX_DEFAULT` — busybox `mount` can't autodetect a filesystem from `UUID=...`, so without `rootfstype=ext4` the initramfs panics with a misleading "No such file or directory" trying to mount root
 - Pre-creates `vmware/shedos-system.vmdk` (16 GB growable) via `/Applications/VMware Fusion.app/Contents/Library/vmware-vdiskmanager` if missing
 - Bakes `$CLAUDE_CODE_OAUTH_TOKEN` (preflighted with a real `/v1/messages` call) and `~/.ssh/id_*.pub` into the installer apkovl
+- Token changes force a rebuild even when nothing else changed: the `iso`/`iso-x86` targets depend on `work/.token-hash`, a stamp holding `sha256($CLAUDE_CODE_OAUTH_TOKEN)` (hash only, never the secret; in gitignored `work/`). Make can't see env vars, so without this an up-to-date ISO would silently ship a stale/absent token. To force a bake regardless, run `build.sh` directly (it always rebuilds): `OUT_ISO=… ARCH=… ./build.sh`
 
 ## Installer wizard (v0.5.0+)
 

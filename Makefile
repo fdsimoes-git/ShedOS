@@ -40,19 +40,39 @@ help:
 	@echo "  make clean         rm work/"
 	@echo "  make distclean     rm work/ out/ vmware/* — full reset"
 
+# Common ISO prerequisites. work/.token-hash is included so a change to the
+# CLAUDE_CODE_OAUTH_TOKEN env var forces a rebuild — Make tracks file
+# timestamps, not env vars, so without this an up-to-date ISO would silently
+# ship a stale (or absent) token. See the token-stamp rule below.
+ISO_DEPS := build.sh overlay $(shell find overlay -type f) installer $(shell find installer -type f) \
+            config/alpine-release config/arch config/target-packages.list work/.token-hash
+
 iso: $(ISO)
 
-$(ISO): build.sh overlay $(shell find overlay -type f) installer $(shell find installer -type f) config/alpine-release config/arch config/target-packages.list
+$(ISO): $(ISO_DEPS)
 	./build.sh
 
 iso-x86: $(ISO_X86)
 
 # Build the x86_64 ISO straight to its own path via OUT_ISO so it never
-# clobbers the arm64 ISO at $(ISO). Same prerequisites as $(ISO) so it rebuilds
-# when sources change (and so qemu-run/vm-x86, which depend on $(ISO_X86),
-# resolve from a clean tree).
-$(ISO_X86): build.sh overlay $(shell find overlay -type f) installer $(shell find installer -type f) config/alpine-release config/arch config/target-packages.list
+# clobbers the arm64 ISO at $(ISO). Shares $(ISO_DEPS) so it rebuilds on source
+# (or token) changes and so qemu-run/vm-x86, which depend on $(ISO_X86),
+# resolve from a clean tree.
+$(ISO_X86): $(ISO_DEPS)
 	OUT_ISO=$(ISO_X86) ARCH=x86_64 SKIP_VMDK=1 ./build.sh
+
+# Materialize the OAuth token's state into a stamp file so the ISO targets can
+# depend on it (Make can't depend on an env var directly). Only a SHA-256 of
+# the token is written — to gitignored work/, never the token itself. The
+# stamp's mtime changes ONLY when the token changes, so unchanged tokens don't
+# trigger needless rebuilds; the FORCE prerequisite re-checks on every build.
+work/.token-hash: FORCE
+	@mkdir -p work
+	@printf '%s' "$$CLAUDE_CODE_OAUTH_TOKEN" | shasum -a 256 | awk '{print $$1}' > $@.tmp
+	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv $@.tmp $@; fi
+
+FORCE:
+.PHONY: FORCE
 
 vm: $(VMX)
 
