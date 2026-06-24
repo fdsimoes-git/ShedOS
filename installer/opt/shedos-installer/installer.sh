@@ -38,7 +38,9 @@ DETECT=/opt/shedos-installer/detect-disk.sh
 # Invoke via `sh` (not as an executable) so detection still runs if the exec
 # bit didn't survive the build/extract path.
 DISK="${DISK:-$( [ -r "$DETECT" ] && sh "$DETECT" 2>/dev/null )}"
-[ -z "$DISK" ] && [ -b /dev/sda ] && DISK=/dev/sda   # last-ditch fallback
+# NO /dev/sda fallback on purpose: detect-disk.sh returns empty only when every
+# disk was excluded (removable / the boot medium), so guessing /dev/sda here
+# could target the very USB stick we booted from. Fail safe instead.
 [ -n "$DISK" ] || die "no install-target disk found (only removable / boot media attached?)"
 
 # Partition device names: NVMe/mmc need a 'p' separator (nvme0n1p1), SATA/virtio

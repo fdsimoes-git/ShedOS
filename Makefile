@@ -5,6 +5,7 @@ ISO_X86 := out/shedos-installer-x86_64.iso
 VMX     := vmware/shedos.vmx
 VMX_X86 := vmware/shedos-x86.vmx
 SYSTEM_VMDK := vmware/shedos-system.vmdk
+SYSTEM_VMDK_X86 := vmware/shedos-system-x86.vmdk
 SOCKET  := /tmp/shedos.serial
 QEMU_DISK ?= out/shedos-disk-x86.qcow2
 QEMU_MEM  ?= 2G
@@ -88,7 +89,24 @@ $(VMX): vmware/shedos.vmx.tmpl $(ISO)
 
 vm-x86: $(VMX_X86)
 
+# iso-x86 builds with SKIP_VMDK=1 (the ISO build shouldn't require Fusion), so
+# the x86 system disk is created here instead, via Fusion's vmware-vdiskmanager.
+# A dedicated x86 disk (not the arm64 shedos-system.vmdk) avoids a cross-arch
+# clash. NOTE: x86 VMware guests run only on Intel Macs; on Apple Silicon use
+# 'make qemu-run' instead.
 $(VMX_X86): vmware/shedos-x86.vmx.tmpl $(ISO_X86)
+	@if [ ! -f $(SYSTEM_VMDK_X86) ]; then \
+		vdm="/Applications/VMware Fusion.app/Contents/Library/vmware-vdiskmanager"; \
+		if [ -x "$$vdm" ]; then \
+			echo "[vm-x86] creating $(SYSTEM_VMDK_X86) (16 GB)"; \
+			"$$vdm" -c -s 16GB -a lsilogic -t 0 $(SYSTEM_VMDK_X86) >/dev/null \
+				|| { echo "vmware-vdiskmanager failed to create $(SYSTEM_VMDK_X86)"; exit 1; }; \
+		else \
+			echo "vmware-vdiskmanager not found — install VMware Fusion to create $(SYSTEM_VMDK_X86)."; \
+			echo "(x86 VMware guests run only on Intel Macs; on Apple Silicon use 'make qemu-run'.)"; \
+			exit 1; \
+		fi; \
+	fi
 	cp vmware/shedos-x86.vmx.tmpl $(VMX_X86)
 
 run: $(ISO) $(VMX)
