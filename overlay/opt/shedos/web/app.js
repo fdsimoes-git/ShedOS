@@ -158,9 +158,39 @@
   function safeRenderUrl(raw) {
     if (typeof raw !== "string") return "about:blank";
     const u = raw.trim();
-    if (/^(https?:\/\/|\/render\/|\/static\/)/i.test(u)) return u;
     if (u === "about:blank") return u;
-    return "about:blank";
+    // Launder through the URL parser instead of a bare regex: parse against
+    // our own origin (so relative /render/ + /static/ paths resolve), allow
+    // only http(s), and return the freshly-constructed `parsed.href`. This
+    // blocks javascript:/data: URLs (XSS) and, because the returned string is
+    // rebuilt by URL(), breaks the taint flow CodeQL tracks into .src/.href
+    // (js/xss + js/client-side-unvalidated-url-redirection).
+    let parsed;
+    try {
+      parsed = new URL(u, window.location.origin);
+    } catch (e) {
+      return "about:blank";
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "about:blank";
+    }
+    // Relative inputs (image/pdf/html assets) must stay same-origin under
+    // /render/ or /static/; absolute http(s) is for `web` render tabs.
+    const isAbsolute = /^https?:\/\//i.test(u);
+    if (!isAbsolute &&
+        (parsed.origin !== window.location.origin ||
+         !/^\/(render|static)\//.test(parsed.pathname))) {
+      return "about:blank";
+    }
+    return parsed.href;
+  }
+
+  // Render-tab / session ids are always 12 lowercase hex chars
+  // (uuid4().hex[:12] for sessions, sha1(seed)[:12] for render assets).
+  // Reject anything else so a poisoned manifest id can't traverse or steer
+  // a fetch() URL built from it (CodeQL js/request-forgery).
+  function safeId(id) {
+    return (typeof id === "string" && /^[0-9a-f]{12}$/.test(id)) ? id : null;
   }
 
   // For markdown/code/json render tabs the URL shape is fixed:
@@ -459,13 +489,16 @@
       return;
     }
     if (t.type === "chat") {
-      // delete the brain session too
-      apiDelete(`/api/sessions/${t.sessionId}`).catch(() => {});
+      // delete the brain session too (validate the id first so a poisoned
+      // sessionId can't steer the fetch — CodeQL js/request-forgery)
+      const sid = safeId(t.sessionId);
+      if (sid) apiDelete(`/api/sessions/${sid}`).catch(() => {});
     } else if (t.assetId) {
       // Render tab: also drop the server-side manifest entry + the
       // asset directory so it doesn't reappear after a refresh and
       // doesn't accumulate on disk forever.
-      apiDelete(`/api/render-tabs/${t.assetId}`).catch(() => {});
+      const aid = safeId(t.assetId);
+      if (aid) apiDelete(`/api/render-tabs/${aid}`).catch(() => {});
     }
     tabs = tabs.filter(t => t.id !== id);
     if (currentTabId === id) {
@@ -497,7 +530,9 @@
   async function loadChatHistory(tab) {
     clearChat();
     try {
-      const data = await apiGet(`/api/sessions/${tab.sessionId}/messages`);
+      const sid = safeId(tab.sessionId);
+      if (!sid) { renderEmpty(tab.title); return; }
+      const data = await apiGet(`/api/sessions/${sid}/messages`);
       const msgs = data.messages || [];
       if (!msgs.length) {
         renderEmpty(tab.title);
