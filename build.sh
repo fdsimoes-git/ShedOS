@@ -48,7 +48,10 @@ INSTALLER_STAGE="$WORK/installer-stage"
 OVERLAY_STAGE="$WORK/overlay-stage"
 ISO_ORIG_DIR="$WORK/iso-orig"
 ISO_RW_DIR="$WORK/iso-rw"
-OUT_ISO="$OUT/shedos-installer.iso"
+# Output ISO path. Overridable via env so the x86_64 build can target its own
+# file (out/shedos-installer-x86_64.iso) instead of clobbering the arm64 ISO at
+# the default path — `make iso-x86` passes OUT_ISO=... for exactly this.
+OUT_ISO="${OUT_ISO:-$OUT/shedos-installer.iso}"
 SYSTEM_VMDK="$HERE/vmware/shedos-system.vmdk"
 
 log() { printf '\033[1;34m[build]\033[0m %s\n' "$*"; }

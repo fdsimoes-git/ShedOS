@@ -45,9 +45,14 @@ iso: $(ISO)
 $(ISO): build.sh overlay $(shell find overlay -type f) installer $(shell find installer -type f) config/alpine-release config/arch config/target-packages.list
 	./build.sh
 
-iso-x86:
-	ARCH=x86_64 SKIP_VMDK=1 ./build.sh
-	@if [ -f out/shedos-installer.iso ]; then cp out/shedos-installer.iso $(ISO_X86); echo "[make] x86_64 ISO also at $(ISO_X86)"; fi
+iso-x86: $(ISO_X86)
+
+# Build the x86_64 ISO straight to its own path via OUT_ISO so it never
+# clobbers the arm64 ISO at $(ISO). Same prerequisites as $(ISO) so it rebuilds
+# when sources change (and so qemu-run/vm-x86, which depend on $(ISO_X86),
+# resolve from a clean tree).
+$(ISO_X86): build.sh overlay $(shell find overlay -type f) installer $(shell find installer -type f) config/alpine-release config/arch config/target-packages.list
+	OUT_ISO=$(ISO_X86) ARCH=x86_64 SKIP_VMDK=1 ./build.sh
 
 vm: $(VMX)
 
